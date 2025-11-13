@@ -1,0 +1,21 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.ipynb_checkpoints/
+
+# Local envs (just in case)
+venv/
+.venv/
+
+# Data & outputs (never commit)
+data/
+checkpoints/
+logs/
+runs/
+outputs/
+
+# IDE/editor
+.vscode/
+.idea/
