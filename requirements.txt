@@ -1,0 +1,9 @@
+numpy
+scipy
+pillow
+tqdm
+matplotlib
+
+einops
+pytorch-fid
+tensorboard
