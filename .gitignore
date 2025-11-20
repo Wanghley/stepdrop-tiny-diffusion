@@ -19,3 +19,24 @@ outputs/
 # IDE/editor
 .vscode/
 .idea/
+
+# LaTeX build files
+*.aux
+*.bbl
+*.blg
+*.brf
+*.idx
+*.ilg
+*.ind
+*.lof
+*.lot
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.nav
+*.snm
+*.vrb
+*.out
+*.log
