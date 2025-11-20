@@ -40,3 +40,6 @@ outputs/
 *.vrb
 *.out
 *.log
+
+# MacOS
+.DS_Store
