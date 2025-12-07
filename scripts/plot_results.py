@@ -41,13 +41,18 @@ def load_latest_report(results_dir="results"):
 
 def plot_pareto(df, output_dir):
     """Generates Quality (FID) vs Speed (Throughput) scatter plot."""
+    valid_df = df[(df['throughput'] > 0) & (df['fid'] > 0)].copy()
+    if len(valid_df) == 0:
+        print("⚠️ Skipping Pareto plot (no valid throughput/FID data)")
+        return
+    
     fig, ax = plt.subplots(figsize=(8, 6))
     
     # Plot points
-    ax.scatter(df['throughput'], df['fid'], color=DUKE_BLUE, s=150, zorder=3, edgecolors='white', linewidth=1.5)
+    ax.scatter(valid_df['throughput'], valid_df['fid'], color=DUKE_BLUE, s=150, zorder=3, edgecolors='white', linewidth=1.5)
     
     # Add labels
-    for i, row in df.iterrows():
+    for i, row in valid_df.iterrows():
         ax.annotate(
             row['strategy'], 
             (row['throughput'], row['fid']), 
@@ -74,13 +79,22 @@ def plot_pareto(df, output_dir):
 
 def plot_speedup(df, output_dir):
     """Generates normalized speedup bar chart."""
+    valid_df = df[df['throughput'] > 0].copy()
+    if len(valid_df) == 0:
+        print("⚠️ Skipping speedup plot (no throughput data)")
+        return
+    
     fig, ax = plt.subplots(figsize=(8, 6))
     
-    # Calculate speedup relative to Baseline
-    baseline_throughput = df[df['strategy'].str.contains("DDPM", case=False)]['throughput'].values[0]
-    df['speedup'] = df['throughput'] / baseline_throughput
+    # Find baseline (DDPM or first strategy)
+    baseline_row = valid_df[valid_df['strategy'].str.contains("DDPM", case=False)]
+    if len(baseline_row) == 0:
+        baseline_row = valid_df.iloc[[0]]
     
-    bars = ax.bar(df['strategy'], df['speedup'], color=DUKE_BLUE, width=0.6, zorder=3)
+    baseline_throughput = baseline_row['throughput'].values[0]
+    valid_df['speedup'] = valid_df['throughput'] / baseline_throughput
+    
+    bars = ax.bar(valid_df['strategy'], valid_df['speedup'], color=DUKE_BLUE, width=0.6, zorder=3)
     
     # Add value labels
     for bar in bars:
@@ -106,6 +120,10 @@ def plot_speedup(df, output_dir):
 
 def plot_flops(df, output_dir):
     """Generates FLOPs comparison bar chart."""
+    if 'flops_per_sample' not in df.columns:
+        print("⚠️ Skipping FLOPs plot (no flops_per_sample data)")
+        return
+        
     fig, ax = plt.subplots(figsize=(8, 6))
     
     # Convert FLOPs to GFLOPs
@@ -133,6 +151,139 @@ def plot_flops(df, output_dir):
     print(f"✅ Saved FLOPs plot to {save_path}")
     plt.close()
 
+
+def plot_metrics_comparison(df, output_dir):
+    """Generates side-by-side comparison of FID and IS."""
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    
+    # FID plot (lower is better)
+    ax1 = axes[0]
+    valid_fid = df[df['fid'] > 0].copy()
+    if len(valid_fid) > 0:
+        bars1 = ax1.bar(valid_fid['strategy'], valid_fid['fid'], color=DUKE_BLUE, width=0.6, zorder=3)
+        for bar in bars1:
+            height = bar.get_height()
+            ax1.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{height:.1f}',
+                    ha='center', va='bottom', fontweight='bold', fontsize=9, color=DUKE_BLACK)
+    ax1.set_title('FID Score [Lower is Better]', fontsize=12, fontweight='bold', color=DUKE_BLUE)
+    ax1.set_ylabel('FID', fontsize=11, fontweight='bold')
+    ax1.set_xlabel('Strategy', fontsize=11, fontweight='bold')
+    ax1.tick_params(axis='x', rotation=45)
+    ax1.grid(axis='y', linestyle='--', alpha=0.5, color=GRAY_LIGHT)
+    
+    # IS plot (higher is better)
+    ax2 = axes[1]
+    valid_is = df[df['is_mean'] > 0].copy()
+    if len(valid_is) > 0:
+        bars2 = ax2.bar(valid_is['strategy'], valid_is['is_mean'], color=DUKE_ROYAL_BLUE, width=0.6, zorder=3, 
+                       yerr=valid_is['is_std'] if 'is_std' in valid_is.columns else None, capsize=4)
+        for i, bar in enumerate(bars2):
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{height:.2f}',
+                    ha='center', va='bottom', fontweight='bold', fontsize=9, color=DUKE_BLACK)
+    ax2.set_title('Inception Score [Higher is Better]', fontsize=12, fontweight='bold', color=DUKE_BLUE)
+    ax2.set_ylabel('IS', fontsize=11, fontweight='bold')
+    ax2.set_xlabel('Strategy', fontsize=11, fontweight='bold')
+    ax2.tick_params(axis='x', rotation=45)
+    ax2.grid(axis='y', linestyle='--', alpha=0.5, color=GRAY_LIGHT)
+    
+    plt.tight_layout()
+    save_path = output_dir / "plot_metrics_comparison.png"
+    plt.savefig(save_path)
+    print(f"✅ Saved Metrics comparison plot to {save_path}")
+    plt.close()
+
+
+def plot_nfe_vs_quality(df, output_dir):
+    """Generates NFE vs FID plot to show quality-efficiency tradeoff."""
+    valid_df = df[(df['nfe'] > 0) & (df['fid'] > 0)].copy()
+    if len(valid_df) == 0:
+        print("⚠️ Skipping NFE vs Quality plot (no valid data)")
+        return
+    
+    fig, ax = plt.subplots(figsize=(8, 6))
+    
+    ax.scatter(valid_df['nfe'], valid_df['fid'], color=DUKE_BLUE, s=150, zorder=3, edgecolors='white', linewidth=1.5)
+    
+    for i, row in valid_df.iterrows():
+        ax.annotate(
+            row['strategy'], 
+            (row['nfe'], row['fid']), 
+            xytext=(5, 5), textcoords='offset points',
+            fontsize=10, fontweight='bold', color=DUKE_BLACK
+        )
+
+    ax.set_title('Number of Function Evaluations vs Quality', fontsize=14, fontweight='bold', color=DUKE_BLUE)
+    ax.set_xlabel('NFE (Function Evaluations) [Lower is Better]', fontsize=11, fontweight='bold')
+    ax.set_ylabel('FID Score [Lower is Better]', fontsize=11, fontweight='bold')
+    ax.grid(True, linestyle='--', alpha=0.5, color=GRAY_LIGHT)
+    
+    plt.tight_layout()
+    save_path = output_dir / "plot_nfe_vs_quality.png"
+    plt.savefig(save_path)
+    print(f"✅ Saved NFE vs Quality plot to {save_path}")
+    plt.close()
+
+
+def plot_summary_table(df, output_dir):
+    """Generate a summary table as an image."""
+    # Select columns to show
+    cols_to_show = ['strategy', 'fid', 'is_mean', 'throughput', 'nfe', 'duration']
+    existing_cols = [c for c in cols_to_show if c in df.columns]
+    table_df = df[existing_cols].copy()
+    
+    # Format numbers
+    for col in ['fid', 'is_mean', 'throughput', 'duration']:
+        if col in table_df.columns:
+            table_df[col] = table_df[col].apply(lambda x: f"{x:.2f}" if x > 0 else "N/A")
+    
+    if 'nfe' in table_df.columns:
+        table_df['nfe'] = table_df['nfe'].apply(lambda x: str(int(x)) if x > 0 else "N/A")
+    
+    # Rename columns for display
+    rename_map = {
+        'strategy': 'Strategy',
+        'fid': 'FID ↓',
+        'is_mean': 'IS ↑',
+        'throughput': 'Throughput (img/s) ↑',
+        'nfe': 'NFE ↓',
+        'duration': 'Duration (s) ↓'
+    }
+    table_df = table_df.rename(columns=rename_map)
+    
+    fig, ax = plt.subplots(figsize=(12, max(3, len(table_df) * 0.5 + 1)))
+    ax.axis('tight')
+    ax.axis('off')
+    
+    table = ax.table(
+        cellText=table_df.values,
+        colLabels=table_df.columns,
+        cellLoc='center',
+        loc='center',
+        colColours=[DUKE_BLUE] * len(table_df.columns)
+    )
+    
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1.2, 1.5)
+    
+    # Style header
+    for (i, j), cell in table.get_celld().items():
+        if i == 0:
+            cell.set_text_props(color='white', fontweight='bold')
+        cell.set_edgecolor(GRAY_LIGHT)
+    
+    plt.title('Benchmark Results Summary', fontsize=14, fontweight='bold', color=DUKE_BLUE, pad=20)
+    
+    plt.tight_layout()
+    save_path = output_dir / "plot_summary_table.png"
+    plt.savefig(save_path, bbox_inches='tight', dpi=150)
+    print(f"✅ Saved Summary table to {save_path}")
+    plt.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate Plots for StepDrop Benchmark")
     parser.add_argument("--results", type=str, default="results", help="Root results directory")
@@ -149,20 +300,39 @@ def main():
     # Convert dict to DataFrame
     rows = []
     for name, metrics in data.items():
-        metrics['strategy'] = name
-        rows.append(metrics)
+        if isinstance(metrics, dict):
+            # Handle nested 'name' field
+            if 'name' not in metrics:
+                metrics['strategy'] = name
+            else:
+                metrics['strategy'] = metrics.get('name', name)
+            rows.append(metrics)
+    
+    if not rows:
+        print("❌ No valid data found in report")
+        return
     
     df = pd.DataFrame(rows)
     
-    # Sort by throughput for cleaner bar charts
-    # df = df.sort_values('throughput')
+    # Ensure required columns exist with defaults
+    for col in ['fid', 'is_mean', 'is_std', 'throughput', 'nfe', 'duration']:
+        if col not in df.columns:
+            df[col] = -1
     
-    print("Generating plots...")
+    print(f"\n📊 Loaded {len(df)} strategies")
+    print(df[['strategy', 'fid', 'is_mean', 'throughput']].to_string(index=False))
+    
+    print("\n🎨 Generating plots...")
+    
+    # Generate all plots
     plot_pareto(df, output_dir)
     plot_speedup(df, output_dir)
     plot_flops(df, output_dir)
+    plot_metrics_comparison(df, output_dir)
+    plot_nfe_vs_quality(df, output_dir)
+    plot_summary_table(df, output_dir)
     
-    print(f"\n🎉 Plots generated in: {output_dir}")
+    print(f"\n🎉 All plots generated in: {output_dir}")
 
 if __name__ == "__main__":
     main()
