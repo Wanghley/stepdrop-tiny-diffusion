@@ -47,6 +47,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # Import from project
 from src.modules import TinyUNet
 from src.scheduler import NoiseScheduler
+from src.sampler import DDPMSampler, DDIMSampler, StepDropSampler, AdaptiveStepDropSampler
 from src.eval.metrics_utils import (
     DiffusionEvaluator,
     EvaluationReport,
@@ -303,10 +304,6 @@ def load_model(checkpoint_path: Optional[str], device: str, dummy: bool = False)
 
 def create_sampler(strategy: StrategyConfig, num_timesteps: int = 1000):
     """Create sampler based on strategy type."""
-    from src.sampler.DDPM import DDPMSampler
-    from src.sampler.DDIM import DDIMSampler
-    from scripts.step_skipper import StochasticStepSkipScheduler, AdaptiveStepSkipScheduler
-    
     if strategy.type == "ddpm":
         return DDPMSampler(num_timesteps=num_timesteps)
     elif strategy.type == "ddim":
@@ -316,9 +313,9 @@ def create_sampler(strategy: StrategyConfig, num_timesteps: int = 1000):
             eta=strategy.params.get("eta", 0.0)
         )
     elif strategy.type == "stepdrop":
-        return StochasticStepSkipScheduler(num_timesteps=num_timesteps)
+        return StepDropSampler(num_timesteps=num_timesteps)
     elif strategy.type == "stepdrop_adaptive":
-        return AdaptiveStepSkipScheduler(num_timesteps=num_timesteps)
+        return AdaptiveStepDropSampler(num_timesteps=num_timesteps)
     else:
         raise ValueError(f"Unknown strategy type: {strategy.type}")
 
@@ -337,22 +334,23 @@ def create_generator(
         shape = (num_samples, *image_shape)
         
         if strategy.type == "ddpm":
-            samples = sampler.sample(model, shape, device=device)
+            samples = sampler.sample(model, shape, device=device, show_progress=False)
         elif strategy.type == "ddim":
-            samples = sampler.sample(model, shape, device=device)
+            samples = sampler.sample(model, shape, device=device, show_progress=False)
         elif strategy.type == "stepdrop":
             samples, _ = sampler.sample(
                 model, shape, device=device,
                 skip_strategy=strategy.params.get("skip_strategy", "linear"),
-                base_skip_prob=strategy.params.get("base_skip_prob", 0.3),
-                return_stats=True
+                skip_prob=strategy.params.get("base_skip_prob", 0.3),
+                return_stats=True,
+                show_progress=False
             )
         elif strategy.type == "stepdrop_adaptive":
             samples, _ = sampler.sample(
                 model, shape, device=device,
                 base_skip_prob=strategy.params.get("base_skip_prob", 0.2),
-                quality_threshold=strategy.params.get("quality_threshold", -0.1),
-                return_stats=True
+                return_stats=True,
+                show_progress=False
             )
         else:
             raise ValueError(f"Unknown strategy: {strategy.type}")
