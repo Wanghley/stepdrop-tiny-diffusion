@@ -51,11 +51,10 @@ class StepDropSampler:
         beta_schedule: Type of beta schedule ("cosine" or "linear")
     
     Skip Strategies:
-        - "constant": Fixed skip probability throughout
-        - "linear": Skip probability increases linearly (skip more in middle)
-        - "cosine": Skip probability follows cosine curve
-        - "early_skip": Higher skip probability for early (high-noise) timesteps
-        - "late_skip": Higher skip probability for late (low-noise) timesteps
+        - "linear": Skip probability increases linearly from 0 at ends to peak at middle
+        - "cosine_sq": Skip probability follows cos²(πt) curve - smooth, peaks in middle
+        - "quadratic": Skip probability follows quadratic curve - sharper peak in middle
+        - "constant": Fixed skip probability throughout (baseline)
     
     Example:
         >>> sampler = StepDropSampler(num_timesteps=1000)
@@ -128,19 +127,30 @@ class StepDropSampler:
             Probability of skipping this timestep
         """
         # Normalize timestep to [0, 1]
+        # t=0 is final step (clean), t=num_timesteps-1 is first step (noisy)
         t_norm = t / (self.num_timesteps - 1)
         
         if strategy == "constant":
+            # Constant skip probability (baseline)
             return base_prob
         
         elif strategy == "linear":
-            # Higher in middle, lower at ends
-            # Peak at t=0.5, zero at t=0 and t=1
+            # Linear: peaks at middle (t_norm=0.5), zero at ends
+            # p(t) = base_prob * 4 * t * (1-t)
+            # This is actually parabolic but commonly called "linear" schedule
             return base_prob * 4 * t_norm * (1 - t_norm)
         
-        elif strategy == "cosine":
-            # Smooth cosine curve, higher in middle
-            return base_prob * (1 - np.cos(2 * np.pi * t_norm)) / 2
+        elif strategy == "cosine_sq" or strategy == "cosine":
+            # Cosine²: smooth curve, peaks at middle
+            # p(t) = base_prob * sin²(π * t) = base_prob * (1 - cos(2πt)) / 2
+            # Smoother transitions than linear, gentler at boundaries
+            return base_prob * (np.sin(np.pi * t_norm) ** 2)
+        
+        elif strategy == "quadratic":
+            # Quadratic: sharper peak in middle than linear
+            # p(t) = base_prob * 16 * t² * (1-t)²
+            # More aggressive skipping in the middle, more conservative at ends
+            return base_prob * 16 * (t_norm ** 2) * ((1 - t_norm) ** 2)
         
         elif strategy == "early_skip":
             # Higher skip probability for early (high t) timesteps

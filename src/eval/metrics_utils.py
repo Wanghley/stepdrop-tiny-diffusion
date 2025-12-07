@@ -686,14 +686,14 @@ def compute_lpips(
     if HAS_LPIPS:
         loss_fn = lpips.LPIPS(net=net).to(device)
         
-        # Ensure [-1, 1] range
-        if images1.min() >= 0:
-            images1 = images1 * 2 - 1
-        if images2.min() >= 0:
-            images2 = images2 * 2 - 1
-        
         images1 = images1.to(device)
         images2 = images2.to(device)
+        
+        # lpips library expects [-1, 1] range
+        if images1.min() >= 0 and images1.max() <= 1:
+            images1 = images1 * 2 - 1
+        if images2.min() >= 0 and images2.max() <= 1:
+            images2 = images2 * 2 - 1
         
         lpips_values = loss_fn(images1, images2)
         mean_lpips = lpips_values.mean().item()
@@ -704,6 +704,15 @@ def compute_lpips(
         
         images1 = images1.to(device)
         images2 = images2.to(device)
+        
+        # torchmetrics expects [0, 1] range
+        if images1.min() < 0:
+            images1 = (images1 + 1) / 2
+        if images2.min() < 0:
+            images2 = (images2 + 1) / 2
+        
+        images1 = images1.clamp(0, 1)
+        images2 = images2.clamp(0, 1)
         
         mean_lpips = lpips_metric(images1, images2).item()
         std_lpips = 0.0
@@ -887,14 +896,19 @@ def compute_intra_lpips(
     n = len(images)
     num_pairs = min(num_pairs, n * (n - 1) // 2)
     
+    images = images.to(device)
+    
     if HAS_LPIPS:
         loss_fn = lpips.LPIPS(net='alex').to(device)
+        # lpips library expects [-1, 1]
+        if images.min() >= 0 and images.max() <= 1:
+            images = images * 2 - 1
     else:
         loss_fn = LearnedPerceptualImagePatchSimilarity(net_type='alex', normalize=True).to(device)
-    
-    images = images.to(device)
-    if images.min() >= 0:
-        images = images * 2 - 1
+        # torchmetrics expects [0, 1]
+        if images.min() < 0:
+            images = (images + 1) / 2
+        images = images.clamp(0, 1)
     
     # Random pairs
     indices = torch.randperm(n * (n - 1) // 2)[:num_pairs]
@@ -904,7 +918,10 @@ def compute_intra_lpips(
     for i in range(n):
         for j in range(i + 1, n):
             if pair_idx in indices:
-                val = loss_fn(images[i:i+1], images[j:j+1])
+                if HAS_LPIPS:
+                    val = loss_fn(images[i:i+1], images[j:j+1])
+                else:
+                    val = loss_fn(images[i:i+1], images[j:j+1])
                 lpips_values.append(val.item())
             pair_idx += 1
             if len(lpips_values) >= num_pairs:
