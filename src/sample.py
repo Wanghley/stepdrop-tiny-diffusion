@@ -9,11 +9,11 @@ Usage:
     # Sample with DDIM (faster)
     python sample.py --checkpoint checkpoints/model.pt --method ddim --ddim_steps 50
 
+    # Sample with StepDrop
+    python sample.py --checkpoint checkpoints/model.pt --method stepdrop --skip_prob 0.3
+
     # Generate more samples
     python sample.py --checkpoint checkpoints/model.pt --n_samples 64
-
-    # Save to specific directory
-    python sample.py --checkpoint checkpoints/model.pt --output_dir my_samples/
 
     # Full example
     python sample.py \\
@@ -40,8 +40,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import Config, add_common_args
 from src.modules import TinyUNet
-from src.sampler.DDIM import DDIMSampler
-from src.sampler.DDPM import DDPMSampler
+from src.sampler import DDPMSampler, DDIMSampler, StepDropSampler, AdaptiveStepDropSampler
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     
     # Sampling options
     parser.add_argument("--method", type=str, default="ddpm",
-                        choices=["ddpm", "ddim"],
+                        choices=["ddpm", "ddim", "stepdrop", "adaptive_stepdrop"],
                         help="Sampling method")
     parser.add_argument("--n_samples", type=int, default=16,
                         help="Number of samples to generate")
@@ -67,6 +66,11 @@ def parse_args() -> argparse.Namespace:
                         help="Number of DDIM sampling steps")
     parser.add_argument("--ddim_eta", type=float, default=0.0,
                         help="DDIM eta parameter (0=deterministic, 1=stochastic)")
+    parser.add_argument("--skip_prob", type=float, default=0.3,
+                        help="StepDrop skip probability")
+    parser.add_argument("--skip_strategy", type=str, default="linear",
+                        choices=["constant", "linear", "cosine", "early_skip", "late_skip"],
+                        help="StepDrop skip strategy")
     parser.add_argument("--batch_size", type=int, default=16,
                         help="Batch size for generation")
     
@@ -166,9 +170,13 @@ def main():
     print(f"  - Channels: {channels}")
     print(f"  - Timesteps: {n_timesteps}")
     print(f"  - Method: {args.method}")
+    
     if args.method == "ddim":
         print(f"  - DDIM steps: {args.ddim_steps}")
         print(f"  - DDIM eta: {args.ddim_eta}")
+    elif args.method in ["stepdrop", "adaptive_stepdrop"]:
+        print(f"  - Skip probability: {args.skip_prob}")
+        print(f"  - Skip strategy: {args.skip_strategy}")
     
     # Create model and load weights
     model = TinyUNet(
@@ -183,15 +191,26 @@ def main():
     if args.method == "ddpm":
         print(f"Initializing DDPM sampler with {n_timesteps} timesteps")
         sampler = DDPMSampler(num_timesteps=n_timesteps)
-    else:
+    elif args.method == "ddim":
         print(f"Initializing DDIM sampler with {n_timesteps} timesteps, {args.ddim_steps} inference steps")
-        sampler = DDIMSampler(num_timesteps=n_timesteps)
+        sampler = DDIMSampler(
+            num_timesteps=n_timesteps,
+            num_inference_steps=args.ddim_steps,
+            eta=args.ddim_eta
+        )
+    elif args.method == "stepdrop":
+        print(f"Initializing StepDrop sampler with {n_timesteps} timesteps")
+        sampler = StepDropSampler(num_timesteps=n_timesteps)
+    elif args.method == "adaptive_stepdrop":
+        print(f"Initializing Adaptive StepDrop sampler with {n_timesteps} timesteps")
+        sampler = AdaptiveStepDropSampler(num_timesteps=n_timesteps)
     
     # Generate samples
     print(f"\nGenerating {args.n_samples} samples...")
     
     all_samples = []
     remaining = args.n_samples
+    total_stats = {"steps_taken": 0, "steps_skipped": 0}
     
     with torch.no_grad():
         while remaining > 0:
@@ -202,16 +221,39 @@ def main():
                 samples = sampler.sample(
                     model=model,
                     shape=shape,
-                    device=str(device)
+                    device=str(device),
+                    show_progress=(remaining == args.n_samples)
                 )
-            else:
+            elif args.method == "ddim":
                 samples = sampler.sample(
                     model=model,
                     shape=shape,
-                    num_inference_steps=args.ddim_steps,
-                    eta=args.ddim_eta,
-                    device=str(device)
+                    device=str(device),
+                    show_progress=(remaining == args.n_samples)
                 )
+            elif args.method == "stepdrop":
+                samples, stats = sampler.sample(
+                    model=model,
+                    shape=shape,
+                    device=str(device),
+                    skip_prob=args.skip_prob,
+                    skip_strategy=args.skip_strategy,
+                    show_progress=(remaining == args.n_samples)
+                )
+                if stats:
+                    total_stats["steps_taken"] += stats.steps_taken
+                    total_stats["steps_skipped"] += stats.steps_skipped
+            elif args.method == "adaptive_stepdrop":
+                samples, stats = sampler.sample(
+                    model=model,
+                    shape=shape,
+                    device=str(device),
+                    base_skip_prob=args.skip_prob,
+                    show_progress=(remaining == args.n_samples)
+                )
+                if stats:
+                    total_stats["steps_taken"] += stats["steps_taken"]
+                    total_stats["steps_skipped"] += stats["steps_skipped"]
             
             # Normalize from [-1, 1] to [0, 1]
             samples = (samples.clamp(-1, 1) + 1) / 2
@@ -221,6 +263,16 @@ def main():
             print(f"  Generated {args.n_samples - remaining}/{args.n_samples}")
     
     all_samples = torch.cat(all_samples, dim=0)
+    
+    # Print stats for StepDrop methods
+    if args.method in ["stepdrop", "adaptive_stepdrop"]:
+        batches = (args.n_samples + args.batch_size - 1) // args.batch_size
+        avg_steps = total_stats["steps_taken"] / batches
+        avg_skipped = total_stats["steps_skipped"] / batches
+        print(f"\nStepDrop Stats:")
+        print(f"  - Average steps taken: {avg_steps:.0f}")
+        print(f"  - Average steps skipped: {avg_skipped:.0f}")
+        print(f"  - Effective skip rate: {avg_skipped / n_timesteps:.1%}")
     
     # Save samples
     output_dir = Path(args.output_dir)
