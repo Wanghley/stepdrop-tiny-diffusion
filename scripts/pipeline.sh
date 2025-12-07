@@ -74,34 +74,59 @@ STEPDROP_ONLY=false
 # -----------------------------------------------------------------------------
 # Color Output
 # -----------------------------------------------------------------------------
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+# ANSI Escapes (using $'' for cat compatibility)
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[0;33m'
+BLUE=$'\033[0;34m'
+PURPLE=$'\033[0;35m'
+CYAN=$'\033[0;36m'
+WHITE=$'\033[0;37m'
+GREY=$'\033[0;90m'
+
+# Bold/Bright
+B_RED=$'\033[1;31m'
+B_GREEN=$'\033[1;32m'
+B_YELLOW=$'\033[1;33m'
+B_BLUE=$'\033[1;34m'
+B_PURPLE=$'\033[1;35m'
+B_CYAN=$'\033[1;36m'
+B_WHITE=$'\033[1;37m'
+
+# Effects
+BOLD=$'\033[1m'
+ITALIC=$'\033[3m'
+NC=$'\033[0m' # No Color
+
+# Semantic Colors
+C_HEADER=${B_PURPLE}
+C_SUBHEAD=${B_CYAN}
+C_FLAG=${GREEN}
+C_ARG=${YELLOW}
+C_CMD=${B_WHITE}
+C_COMMENT=${GREY}
+C_BORDER=${BLUE}
 
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    echo -e "${B_BLUE}[INFO]${NC} $1"
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    echo -e "${B_GREEN}[SUCCESS]${NC} $1"
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    echo -e "${B_YELLOW}[WARNING]${NC} $1"
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo -e "${B_RED}[ERROR]${NC} $1"
 }
 
 log_step() {
-    echo -e "\n${PURPLE}========================================${NC}"
-    echo -e "${PURPLE}  $1${NC}"
-    echo -e "${PURPLE}========================================${NC}\n"
+    echo -e "\n${C_BORDER}========================================${NC}"
+    echo -e "${C_HEADER}  $1${NC}"
+    echo -e "${C_BORDER}========================================${NC}\n"
 }
 
 # -----------------------------------------------------------------------------
@@ -109,106 +134,80 @@ log_step() {
 # -----------------------------------------------------------------------------
 show_help() {
     cat << EOF
-${CYAN}STEPDROP DIFFUSION MODEL PIPELINE${NC}
-===================================
+${C_BORDER}╔══════════════════════════════════════════════════════════════════════════════╗${NC}
+${C_BORDER}║${NC}   ${B_PURPLE}STEPDROP DIFFUSION MODEL PIPELINE${NC}                                      ${C_BORDER}║${NC}
+${C_BORDER}║${NC}   ${ITALIC}Stochastic Step Skipping in Tiny Diffusion${NC}                             ${C_BORDER}║${NC}
+${C_BORDER}╚══════════════════════════════════════════════════════════════════════════════╝${NC}
 
-A complete pipeline for training, sampling, and evaluating diffusion models.
+${C_COMMENT}A complete pipeline for training, sampling, and benchmarking diffusion models.${NC}
 
-${YELLOW}USAGE:${NC}
-    ./pipeline.sh [OPTIONS]
+${C_SUBHEAD}USAGE:${NC}
+    ${C_CMD}./pipeline.sh${NC} [OPTIONS]
 
-${YELLOW}PIPELINE STAGES:${NC}
-    --train             Run training stage
-    --sample            Run sampling stage
-    --evaluate          Run evaluation/benchmarking stage
-    --all               Run all stages (train → sample → evaluate)
-    --clean             Clean generated files before running
+${C_SUBHEAD}PIPELINE STAGES:${NC}
+    ${C_FLAG}--train${NC}             Run training stage
+    ${C_FLAG}--sample${NC}            Run sampling stage
+    ${C_FLAG}--evaluate${NC}          Run evaluation/benchmarking stage
+    ${C_FLAG}--all${NC}               Run all stages ${C_COMMENT}(train → sample → evaluate)${NC}
+    ${C_FLAG}--clean${NC}             Clean generated files before running
 
-${YELLOW}DATASET OPTIONS:${NC}
-    --dataset NAME      Dataset to use: mnist, cifar10, custom (default: ${DATASET})
-    --custom-data DIR   Path to custom dataset directory
-    --img-size SIZE     Image size (default: ${IMG_SIZE})
-    --channels N        Number of channels (default: ${CHANNELS})
-    --data-dir DIR      Data directory (default: ${DATA_DIR})
+${C_SUBHEAD}DATASET OPTIONS:${NC}
+    ${C_FLAG}--dataset${NC} ${C_ARG}NAME${NC}      Dataset to use: [mnist, cifar10, custom] ${C_COMMENT}(default: ${DATASET})${NC}
+    ${C_FLAG}--custom-data${NC} ${C_ARG}DIR${NC}   Path to custom dataset directory
+    ${C_FLAG}--img-size${NC} ${C_ARG}SIZE${NC}     Image size ${C_COMMENT}(default: ${IMG_SIZE})${NC}
+    ${C_FLAG}--channels${NC} ${C_ARG}N${NC}        Number of channels ${C_COMMENT}(default: ${CHANNELS})${NC}
+    ${C_FLAG}--data-dir${NC} ${C_ARG}DIR${NC}      Data directory ${C_COMMENT}(default: ${DATA_DIR})${NC}
 
-${YELLOW}TRAINING OPTIONS:${NC}
-    --epochs N          Number of training epochs (default: ${EPOCHS})
-    --batch-size N      Training batch size (default: ${BATCH_SIZE})
-    --lr RATE           Learning rate (default: ${LR})
-    --base-channels N   U-Net base channels (default: ${BASE_CHANNELS})
-    --timesteps N       Diffusion timesteps (default: ${N_TIMESTEPS})
-    --schedule TYPE     Noise schedule: linear, cosine (default: ${SCHEDULE_TYPE})
-    --resume PATH       Resume training from checkpoint
-    --seed N            Random seed (default: ${SEED})
+${C_SUBHEAD}TRAINING OPTIONS:${NC}
+    ${C_FLAG}--epochs${NC} ${C_ARG}N${NC}          Number of training epochs ${C_COMMENT}(default: ${EPOCHS})${NC}
+    ${C_FLAG}--batch-size${NC} ${C_ARG}N${NC}      Training batch size ${C_COMMENT}(default: ${BATCH_SIZE})${NC}
+    ${C_FLAG}--lr${NC} ${C_ARG}RATE${NC}           Learning rate ${C_COMMENT}(default: ${LR})${NC}
+    ${C_FLAG}--base-channels${NC} ${C_ARG}N${NC}   U-Net base channels ${C_COMMENT}(default: ${BASE_CHANNELS})${NC}
+    ${C_FLAG}--timesteps${NC} ${C_ARG}N${NC}       Diffusion timesteps ${C_COMMENT}(default: ${N_TIMESTEPS})${NC}
+    ${C_FLAG}--schedule${NC} ${C_ARG}TYPE${NC}     Noise schedule: [linear, cosine] ${C_COMMENT}(default: ${SCHEDULE_TYPE})${NC}
+    ${C_FLAG}--resume${NC} ${C_ARG}PATH${NC}       Resume training from checkpoint
+    ${C_FLAG}--seed${NC} ${C_ARG}N${NC}            Random seed ${C_COMMENT}(default: ${SEED})${NC}
 
-${YELLOW}SAMPLING OPTIONS:${NC}
-    --checkpoint PATH   Path to model checkpoint (required for --sample without --train)
-    --n-samples N       Number of samples to generate (default: ${N_SAMPLES})
-    --method METHOD     Sampling method: ddpm, ddim, stepdrop, adaptive_stepdrop (default: ${SAMPLE_METHOD})
-    --ddim-steps N      DDIM sampling steps (default: ${DDIM_STEPS})
-    --skip-prob P       StepDrop skip probability 0.0-1.0 (default: ${SKIP_PROB})
-    --skip-strategy S   StepDrop strategy (default: ${SKIP_STRATEGY})
-                        Options: constant, linear, cosine_sq, quadratic,
-                                 early_skip, late_skip, critical_preserve
+${C_SUBHEAD}SAMPLING OPTIONS:${NC}
+    ${C_FLAG}--checkpoint${NC} ${C_ARG}PATH${NC}   Path to model checkpoint ${C_COMMENT}(required for --sample without --train)${NC}
+    ${C_FLAG}--n-samples${NC} ${C_ARG}N${NC}       Number of samples to generate ${C_COMMENT}(default: ${N_SAMPLES})${NC}
+    ${C_FLAG}--method${NC} ${C_ARG}METHOD${NC}     Method: [ddpm, ddim, stepdrop] ${C_COMMENT}(default: ${SAMPLE_METHOD})${NC}
+    ${C_FLAG}--ddim-steps${NC} ${C_ARG}N${NC}      DDIM sampling steps ${C_COMMENT}(default: ${DDIM_STEPS})${NC}
+    ${C_FLAG}--skip-prob${NC} ${C_ARG}P${NC}       StepDrop probability [0.0-1.0]
+    ${C_FLAG}--skip-strategy${NC} ${C_ARG}S${NC}   StepDrop strategy: [linear, quadratic, cosine]
 
-${YELLOW}EVALUATION OPTIONS:${NC}
-    --eval-samples N    Samples for evaluation (default: ${EVAL_SAMPLES})
-    --eval-batch N      Evaluation batch size (default: ${EVAL_BATCH_SIZE})
-    --full-metrics      Compute ALL metrics (FID, KID, IS, Precision, Recall, 
-                        Density, Coverage, LPIPS, SSIM, PSNR, Vendi, etc.)
-    --strategies LIST   Comma-separated strategies to evaluate (default: all)
-                        Options: DDPM_1000, DDIM_100, DDIM_50, DDIM_25, DDIM_10,
-                                StepDrop_Linear_0.3, StepDrop_Linear_0.5,
-                                StepDrop_CosineSq_0.3, StepDrop_CosineSq_0.5,
-                                StepDrop_Quadratic_0.3, StepDrop_Quadratic_0.5,
-                                StepDrop_Adaptive
-    --compare-stepdrop  Compare all StepDrop strategies against baselines
-    --stepdrop-only     Evaluate only StepDrop strategies (skip DDPM/DDIM)
+${C_SUBHEAD}EVALUATION OPTIONS:${NC}
+    ${C_FLAG}--eval-samples${NC} ${C_ARG}N${NC}    Samples for FID/IS evaluation ${C_COMMENT}(default: ${EVAL_SAMPLES})${NC}
+    ${C_FLAG}--eval-batch${NC} ${C_ARG}N${NC}      Evaluation batch size ${C_COMMENT}(default: ${EVAL_BATCH_SIZE})${NC}
+    ${C_FLAG}--strategies${NC} ${C_ARG}LIST${NC}   Comma-separated strategies to bench ${C_COMMENT}(default: all)${NC}
 
-${YELLOW}GENERAL OPTIONS:${NC}
-    --device DEVICE     Device: cuda, cpu (default: ${DEVICE})
-    --checkpoint-dir D  Checkpoint directory (default: ${CHECKPOINT_DIR})
-    --sample-dir DIR    Sample output directory (default: ${SAMPLE_DIR})
-    --results-dir DIR   Results directory (default: ${RESULTS_DIR})
-    --log-dir DIR       Log directory (default: ${LOG_DIR})
-    --dry-run           Print commands without executing
-    --verbose           Verbose output
-    --help, -h          Show this help message
+${C_SUBHEAD}GENERAL OPTIONS:${NC}
+    ${C_FLAG}--device${NC} ${C_ARG}DEVICE${NC}     Device: [cuda, cpu] ${C_COMMENT}(default: ${DEVICE})${NC}
+    ${C_FLAG}--checkpoint-dir${NC} ${C_ARG}D${NC}  Checkpoint directory ${C_COMMENT}(default: ${CHECKPOINT_DIR})${NC}
+    ${C_FLAG}--sample-dir${NC} ${C_ARG}DIR${NC}    Sample output directory ${C_COMMENT}(default: ${SAMPLE_DIR})${NC}
+    ${C_FLAG}--results-dir${NC} ${C_ARG}DIR${NC}   Results directory ${C_COMMENT}(default: ${RESULTS_DIR})${NC}
+    ${C_FLAG}--log-dir${NC} ${C_ARG}DIR${NC}       Log directory ${C_COMMENT}(default: ${LOG_DIR})${NC}
+    ${C_FLAG}--dry-run${NC}           Print commands without executing
+    ${C_FLAG}--verbose${NC}           Verbose output
+    ${C_FLAG}--help, -h${NC}          Show this help message
 
-${YELLOW}EXAMPLES:${NC}
-    # Quick test on MNIST
-    ./pipeline.sh --all --dataset mnist --epochs 5 --n-samples 16
+${C_SUBHEAD}EXAMPLES:${NC}
+    ${C_COMMENT}# 1. Quick test on MNIST${NC}
+    ${C_CMD}./pipeline.sh${NC} ${C_FLAG}--all --dataset${NC} ${C_ARG}mnist${NC} ${C_FLAG}--epochs${NC} ${C_ARG}5${NC}
 
-    # Full CIFAR-10 training
-    ./pipeline.sh --train --dataset cifar10 --epochs 100 --base-channels 128
+    ${C_COMMENT}# 2. Full CIFAR-10 training (Serious Run)${NC}
+    ${C_CMD}./pipeline.sh${NC} ${C_FLAG}--train --dataset${NC} ${C_ARG}cifar10${NC} ${C_FLAG}--epochs${NC} ${C_ARG}100${NC} ${C_FLAG}--base-channels${NC} ${C_ARG}128${NC}
 
-    # Sample from trained model
-    ./pipeline.sh --sample --checkpoint checkpoints/cifar_model.pt --n-samples 64
+    ${C_COMMENT}# 3. Sample with StepDrop (Experimental)${NC}
+    ${C_CMD}./pipeline.sh${NC} ${C_FLAG}--sample --method${NC} ${C_ARG}stepdrop${NC} ${C_FLAG}--skip-prob${NC} ${C_ARG}0.5${NC} ${C_FLAG}--skip-strategy${NC} ${C_ARG}quadratic${NC}
 
-    # Sample with StepDrop
-    ./pipeline.sh --sample --checkpoint checkpoints/model.pt --method stepdrop --skip-prob 0.3 --skip-strategy linear
+    ${C_COMMENT}# 4. Run Comprehensive Benchmark${NC}
+    ${C_CMD}./pipeline.sh${NC} ${C_FLAG}--evaluate --checkpoint${NC} ${C_ARG}checkpoints/best_model.pt${NC} ${C_FLAG}--eval-samples${NC} ${C_ARG}5000${NC}
 
-    # Sample with different StepDrop strategies
-    ./pipeline.sh --sample --method stepdrop --skip-strategy quadratic --skip-prob 0.5
+    ${C_COMMENT}# 5. Resume from Checkpoint${NC}
+    ${C_CMD}./pipeline.sh${NC} ${C_FLAG}--train --resume${NC} ${C_ARG}checkpoints/epoch_20.pt${NC}
 
-    # Run full benchmark
-    ./pipeline.sh --evaluate --checkpoint checkpoints/model.pt --eval-samples 5000
-
-    # Compare all StepDrop strategies against DDIM
-    ./pipeline.sh --evaluate --checkpoint checkpoints/model.pt --compare-stepdrop --eval-samples 1000
-
-    # Evaluate only StepDrop strategies
-    ./pipeline.sh --evaluate --checkpoint checkpoints/model.pt --stepdrop-only --full-metrics
-
-    # Specific strategies only
-    ./pipeline.sh --evaluate --strategies "DDIM_50,StepDrop_Linear_0.3,StepDrop_Quadratic_0.3"
-
-    # Custom dataset
-    ./pipeline.sh --all --dataset custom --custom-data /path/to/images --img-size 64
-
-    # Resume training
-    ./pipeline.sh --train --resume checkpoints/checkpoint_epoch_20.pt --epochs 50
-
+${C_BORDER}──────────────────────────────────────────────────────────────────────────────${NC}
 EOF
 }
 

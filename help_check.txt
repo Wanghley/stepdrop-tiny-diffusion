@@ -1,0 +1,106 @@
+[0;35m
+╔═══════════════════════════════════════════════════════════╗
+║         STEPDROP DIFFUSION MODEL PIPELINE                 ║
+║         Stochastic Step Skipping in Tiny Diffusion        ║
+╚═══════════════════════════════════════════════════════════╝
+[0m
+[0;36mSTEPDROP DIFFUSION MODEL PIPELINE[0m
+===================================
+
+A complete pipeline for training, sampling, and evaluating diffusion models.
+
+[1;33mUSAGE:[0m
+    ./pipeline.sh [OPTIONS]
+
+[1;33mPIPELINE STAGES:[0m
+    --train             Run training stage
+    --sample            Run sampling stage
+    --evaluate          Run evaluation/benchmarking stage
+    --all               Run all stages (train → sample → evaluate)
+    --clean             Clean generated files before running
+
+[1;33mDATASET OPTIONS:[0m
+    --dataset NAME      Dataset to use: mnist, cifar10, custom (default: cifar10)
+    --custom-data DIR   Path to custom dataset directory
+    --img-size SIZE     Image size (default: 32)
+    --channels N        Number of channels (default: 3)
+    --data-dir DIR      Data directory (default: ./data)
+
+[1;33mTRAINING OPTIONS:[0m
+    --epochs N          Number of training epochs (default: 50)
+    --batch-size N      Training batch size (default: 128)
+    --lr RATE           Learning rate (default: 2e-4)
+    --base-channels N   U-Net base channels (default: 64)
+    --timesteps N       Diffusion timesteps (default: 1000)
+    --schedule TYPE     Noise schedule: linear, cosine (default: cosine)
+    --resume PATH       Resume training from checkpoint
+    --seed N            Random seed (default: 42)
+
+[1;33mSAMPLING OPTIONS:[0m
+    --checkpoint PATH   Path to model checkpoint (required for --sample without --train)
+    --n-samples N       Number of samples to generate (default: 64)
+    --method METHOD     Sampling method: ddpm, ddim, stepdrop, adaptive_stepdrop (default: ddim)
+    --ddim-steps N      DDIM sampling steps (default: 50)
+    --skip-prob P       StepDrop skip probability 0.0-1.0 (default: 0.3)
+    --skip-strategy S   StepDrop strategy (default: linear)
+                        Options: constant, linear, cosine_sq, quadratic,
+                                 early_skip, late_skip, critical_preserve
+
+[1;33mEVALUATION OPTIONS:[0m
+    --eval-samples N    Samples for evaluation (default: 1000)
+    --eval-batch N      Evaluation batch size (default: 32)
+    --full-metrics      Compute ALL metrics (FID, KID, IS, Precision, Recall, 
+                        Density, Coverage, LPIPS, SSIM, PSNR, Vendi, etc.)
+    --strategies LIST   Comma-separated strategies to evaluate (default: all)
+                        Options: DDPM_1000, DDIM_100, DDIM_50, DDIM_25, DDIM_10,
+                                StepDrop_Linear_0.3, StepDrop_Linear_0.5,
+                                StepDrop_CosineSq_0.3, StepDrop_CosineSq_0.5,
+                                StepDrop_Quadratic_0.3, StepDrop_Quadratic_0.5,
+                                StepDrop_Adaptive
+    --compare-stepdrop  Compare all StepDrop strategies against baselines
+    --stepdrop-only     Evaluate only StepDrop strategies (skip DDPM/DDIM)
+
+[1;33mGENERAL OPTIONS:[0m
+    --device DEVICE     Device: cuda, cpu (default: cuda)
+    --checkpoint-dir D  Checkpoint directory (default: checkpoints)
+    --sample-dir DIR    Sample output directory (default: samples)
+    --results-dir DIR   Results directory (default: results)
+    --log-dir DIR       Log directory (default: logs)
+    --dry-run           Print commands without executing
+    --verbose           Verbose output
+    --help, -h          Show this help message
+
+[1;33mEXAMPLES:[0m
+    # Quick test on MNIST
+    ./pipeline.sh --all --dataset mnist --epochs 5 --n-samples 16
+
+    # Full CIFAR-10 training
+    ./pipeline.sh --train --dataset cifar10 --epochs 100 --base-channels 128
+
+    # Sample from trained model
+    ./pipeline.sh --sample --checkpoint checkpoints/cifar_model.pt --n-samples 64
+
+    # Sample with StepDrop
+    ./pipeline.sh --sample --checkpoint checkpoints/model.pt --method stepdrop --skip-prob 0.3 --skip-strategy linear
+
+    # Sample with different StepDrop strategies
+    ./pipeline.sh --sample --method stepdrop --skip-strategy quadratic --skip-prob 0.5
+
+    # Run full benchmark
+    ./pipeline.sh --evaluate --checkpoint checkpoints/model.pt --eval-samples 5000
+
+    # Compare all StepDrop strategies against DDIM
+    ./pipeline.sh --evaluate --checkpoint checkpoints/model.pt --compare-stepdrop --eval-samples 1000
+
+    # Evaluate only StepDrop strategies
+    ./pipeline.sh --evaluate --checkpoint checkpoints/model.pt --stepdrop-only --full-metrics
+
+    # Specific strategies only
+    ./pipeline.sh --evaluate --strategies "DDIM_50,StepDrop_Linear_0.3,StepDrop_Quadratic_0.3"
+
+    # Custom dataset
+    ./pipeline.sh --all --dataset custom --custom-data /path/to/images --img-size 64
+
+    # Resume training
+    ./pipeline.sh --train --resume checkpoints/checkpoint_epoch_20.pt --epochs 50
+

@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Colors
+B_PURPLE=$'\033[1;35m'
+B_CYAN=$'\033[1;36m'
+NC=$'\033[0m'
+
+echo -e "${B_PURPLE}=== StepDrop DDIM Sampling ===${NC}"
+
 #SBATCH --job-name=ddim_sampling
 #SBATCH --output=logs/ddim_%j.out
 #SBATCH --error=logs/ddim_%j.err
