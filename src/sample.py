@@ -26,16 +26,22 @@ Usage:
 """
 
 import argparse
+import sys
 import torch
 import matplotlib.pyplot as plt
-from tqdm import tqdm
 from pathlib import Path
 from datetime import datetime
 from torchvision.utils import save_image, make_grid
 
-from config import Config, add_common_args
-from modules import TinyUNet
-from scheduler import NoiseScheduler
+# Add project root to path for imports
+SCRIPT_DIR = Path(__file__).parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.config import Config, add_common_args
+from src.modules import TinyUNet
+from src.sampler.DDIM import DDIMSampler
+from src.sampler.DDPM import DDPMSampler
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,102 +83,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-@torch.no_grad()
-def sample_ddpm(
-    model: torch.nn.Module,
-    scheduler: NoiseScheduler,
-    n_samples: int,
-    img_size: int,
-    channels: int,
-    device: torch.device,
-    show_progress: bool = True
-) -> torch.Tensor:
-    """Standard DDPM sampling (T steps)."""
-    model.eval()
-    
-    x = torch.randn((n_samples, channels, img_size, img_size), device=device)
-    
-    timesteps = range(scheduler.n_timesteps - 1, -1, -1)
-    if show_progress:
-        timesteps = tqdm(timesteps, desc="DDPM Sampling", leave=False)
-    
-    for t in timesteps:
-        t_batch = torch.full((n_samples,), t, device=device, dtype=torch.long)
-        
-        predicted_noise = model(x, t_batch)
-        
-        alpha = scheduler.alphas[t]
-        alpha_hat = scheduler.alpha_hats[t]
-        beta = scheduler.betas[t]
-        
-        mean = (1 / torch.sqrt(alpha)) * (
-            x - (beta / torch.sqrt(1 - alpha_hat)) * predicted_noise
-        )
-        
-        if t > 0:
-            noise = torch.randn_like(x)
-            sigma = torch.sqrt(scheduler.posterior_variance[t])
-            x = mean + sigma * noise
-        else:
-            x = mean
-    
-    return (x.clamp(-1, 1) + 1) / 2
-
-
-@torch.no_grad()
-def sample_ddim(
-    model: torch.nn.Module,
-    scheduler: NoiseScheduler,
-    n_samples: int,
-    img_size: int,
-    channels: int,
-    device: torch.device,
-    steps: int = 50,
-    eta: float = 0.0,
-    show_progress: bool = True
-) -> torch.Tensor:
-    """DDIM sampling (accelerated)."""
-    model.eval()
-    
-    x = torch.randn((n_samples, channels, img_size, img_size), device=device)
-    
-    step_ratio = scheduler.n_timesteps // steps
-    timesteps = list(range(0, scheduler.n_timesteps, step_ratio))[::-1]
-    
-    iterator = timesteps
-    if show_progress:
-        iterator = tqdm(timesteps, desc=f"DDIM Sampling ({steps} steps)", leave=False)
-    
-    for i, t in enumerate(iterator):
-        t_batch = torch.full((n_samples,), t, device=device, dtype=torch.long)
-        
-        predicted_noise = model(x, t_batch)
-        
-        alpha_hat_t = scheduler.alpha_hats[t]
-        
-        pred_x0 = (x - torch.sqrt(1 - alpha_hat_t) * predicted_noise) / torch.sqrt(alpha_hat_t)
-        pred_x0 = torch.clamp(pred_x0, -1, 1)
-        
-        if i < len(timesteps) - 1:
-            t_prev = timesteps[i + 1]
-            alpha_hat_t_prev = scheduler.alpha_hats[t_prev]
-        else:
-            alpha_hat_t_prev = torch.tensor(1.0, device=device)
-        
-        sigma_t = eta * torch.sqrt(
-            (1 - alpha_hat_t_prev) / (1 - alpha_hat_t) *
-            (1 - alpha_hat_t / alpha_hat_t_prev)
-        ) if eta > 0 else 0
-        
-        dir_xt = torch.sqrt(1 - alpha_hat_t_prev - sigma_t**2) * predicted_noise
-        
-        noise = torch.randn_like(x) if (i < len(timesteps) - 1 and eta > 0) else 0
-        
-        x = torch.sqrt(alpha_hat_t_prev) * pred_x0 + dir_xt + sigma_t * noise
-    
-    return (x.clamp(-1, 1) + 1) / 2
-
-
 def save_samples(
     samples: torch.Tensor,
     output_dir: Path,
@@ -187,17 +97,21 @@ def save_samples(
     n_samples = len(samples)
     nrow = int(n_samples ** 0.5)
     
+    # Normalize samples from [-1, 1] to [0, 1] if needed
+    if samples.min() < 0:
+        samples = (samples.clamp(-1, 1) + 1) / 2
+    
     if save_grid:
         grid_path = output_dir / f"{prefix}_grid.png"
         grid = make_grid(samples, nrow=nrow, padding=2, normalize=False)
         save_image(grid, grid_path)
-        print(f"✅ Grid saved to {grid_path}")
+        print(f"[SUCCESS] Grid saved to {grid_path}")
     
     if save_individual:
         for i, img in enumerate(samples):
             img_path = output_dir / f"{prefix}_{i:04d}.png"
             save_image(img, img_path)
-        print(f"✅ {n_samples} individual images saved to {output_dir}")
+        print(f"[SUCCESS] {n_samples} individual images saved to {output_dir}")
     
     if show:
         fig, axes = plt.subplots(nrow, (n_samples + nrow - 1) // nrow, figsize=(12, 12))
@@ -239,14 +153,12 @@ def main():
         channels = ckpt_config.get('channels', args.channels)
         base_channels = ckpt_config.get('base_channels', args.base_channels)
         n_timesteps = ckpt_config.get('n_timesteps', args.n_timesteps)
-        schedule_type = ckpt_config.get('schedule_type', args.schedule_type)
         model_state = checkpoint['model_state_dict']
     else:
         img_size = args.img_size
         channels = args.channels
         base_channels = args.base_channels
         n_timesteps = args.n_timesteps
-        schedule_type = args.schedule_type
         model_state = checkpoint
     
     print(f"Configuration:")
@@ -267,12 +179,13 @@ def main():
     model.load_state_dict(model_state)
     model.eval()
     
-    # Create scheduler
-    scheduler = NoiseScheduler(
-        n_timesteps=n_timesteps,
-        schedule_type=schedule_type,
-        device=str(device)
-    )
+    # Create sampler based on method
+    if args.method == "ddpm":
+        print(f"Initializing DDPM sampler with {n_timesteps} timesteps")
+        sampler = DDPMSampler(num_timesteps=n_timesteps)
+    else:
+        print(f"Initializing DDIM sampler with {n_timesteps} timesteps, {args.ddim_steps} inference steps")
+        sampler = DDIMSampler(num_timesteps=n_timesteps)
     
     # Generate samples
     print(f"\nGenerating {args.n_samples} samples...")
@@ -283,19 +196,29 @@ def main():
     with torch.no_grad():
         while remaining > 0:
             batch_size = min(args.batch_size, remaining)
+            shape = (batch_size, channels, img_size, img_size)
             
             if args.method == "ddpm":
-                samples = sample_ddpm(
-                    model, scheduler, batch_size, img_size, channels, device
+                samples = sampler.sample(
+                    model=model,
+                    shape=shape,
+                    device=str(device)
                 )
             else:
-                samples = sample_ddim(
-                    model, scheduler, batch_size, img_size, channels, device,
-                    steps=args.ddim_steps, eta=args.ddim_eta
+                samples = sampler.sample(
+                    model=model,
+                    shape=shape,
+                    num_inference_steps=args.ddim_steps,
+                    eta=args.ddim_eta,
+                    device=str(device)
                 )
+            
+            # Normalize from [-1, 1] to [0, 1]
+            samples = (samples.clamp(-1, 1) + 1) / 2
             
             all_samples.append(samples)
             remaining -= batch_size
+            print(f"  Generated {args.n_samples - remaining}/{args.n_samples}")
     
     all_samples = torch.cat(all_samples, dim=0)
     
@@ -313,7 +236,7 @@ def main():
         show=args.show
     )
     
-    print(f"\n✅ Done! Generated {args.n_samples} samples.")
+    print(f"\n[SUCCESS] Done! Generated {args.n_samples} samples.")
 
 
 if __name__ == "__main__":
