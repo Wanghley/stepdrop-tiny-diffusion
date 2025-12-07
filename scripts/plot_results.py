@@ -334,18 +334,26 @@ def main():
         print(f"❌ {e}")
         return
     
-    # Extract strategies data
+    # Extract strategies data - handle different JSON structures
     if 'strategies' in data:
         strategies_data = data['strategies']
     else:
-        strategies_data = data
+        # Old format - data itself is the strategies dict
+        strategies_data = {k: v for k, v in data.items() 
+                          if isinstance(v, dict) and 'fid' in v}
+    
+    if not strategies_data:
+        print("❌ No valid strategy data found in report")
+        print(f"   Available keys: {list(data.keys())}")
+        return
     
     # Build DataFrame
     rows = []
     for name, metrics in strategies_data.items():
         if isinstance(metrics, dict):
-            metrics['strategy'] = metrics.get('name', name)
-            rows.append(metrics)
+            row = metrics.copy()
+            row['strategy'] = row.get('name', name)
+            rows.append(row)
     
     if not rows:
         print("❌ No valid strategy data found")
@@ -362,7 +370,10 @@ def main():
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(-1)
     
     print(f"\n📊 Loaded {len(df)} strategies")
-    print(df[['strategy', 'fid', 'is_mean', 'throughput']].to_string(index=False))
+    
+    # Print available columns
+    available_print_cols = [c for c in ['strategy', 'fid', 'is_mean', 'throughput', 'nfe'] if c in df.columns]
+    print(df[available_print_cols].to_string(index=False))
     
     print("\n🎨 Generating plots...")
     
