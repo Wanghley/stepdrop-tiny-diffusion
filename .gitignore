@@ -15,6 +15,7 @@ checkpoints/
 logs/
 runs/
 outputs/
+results/**/samples/
 
 # IDE/editor
 .vscode/

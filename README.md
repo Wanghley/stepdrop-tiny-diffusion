@@ -62,38 +62,56 @@ To get a local copy up and running, follow these simple steps.
 ### Prerequisites
 
 You will need Python 3.8+ and pip installed on your system.
-* [Python](https://www.python.org/)
-* [pip](https://pypi.org/project/pip/)
+
+- [Python](https://www.python.org/)
+- [pip](https://pypi.org/project/pip/)
 
 ### Installation
 
 1. Clone the repo
+
    ```sh
    git clone https://github.com/wanghley/stepdrop-tiny-diffusion.git
-    ```
+   ```
 
-2.  Navigate to the project directory
-    ```sh
-    cd stepdrop-tiny-diffusion
-    ```
-3.  (Recommended) Create a virtual environment
-    ```sh
-    python -m venv venv
-    source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
-    ```
-4.  Install required packages
-    ```sh
-    pip install -r requirements.txt
-    ```
+2. Navigate to the project directory
+   ```sh
+   cd stepdrop-tiny-diffusion
+   ```
+3. (Recommended) Create a virtual environment
+   ```sh
+   python -m venv venv
+   source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+   ```
+4. Install required packages
+   ```sh
+   pip install -r requirements.txt
+   ```
 
 <p align="right">(<a href="#readme-top">back to top<a>)<p\>
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Interpreting Metrics
+
+When running `scripts/benchmark_strategies.py`, you will generate a `report.json`. Here is how to read the numbers:
+
+| Metric         | Full Name                  | Goal                    | Description                                                                                                                                                            |
+| :------------- | :------------------------- | :---------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **FID**        | Fréchet Inception Distance | **📉 Lower is better**  | Measures how similar the generated images are to the real dataset. <br>• **< 10**: State-of-the-art <br>• **10-30**: High quality <br>• **> 50**: Noticeable artifacts |
+| **IS**         | Inception Score            | **📈 Higher is better** | Measures "clarity" (does it look like an object?) and "diversity" (are there many types of objects?). <br>• For CIFAR-10, real data has IS ≈ 11.0.                     |
+| **Throughput** | Images Per Second          | **📈 Higher is better** | Raw generation speed. Higher throughput means lower latency.                                                                                                           |
+| **MACs/FLOPs** | Multiply-Accumulates       | **📉 Lower is better**  | The theoretical computational cost. StepDrop aims to reduce this by skipping steps.                                                                                    |
+| **Avg Steps**  | Average Steps Taken        | **📉 Lower is better**  | The average number of U-Net evaluations per image. <br>• **DDPM**: Always 1000 <br>• **DDIM**: Fixed (e.g., 50) <br>• **StepDrop**: Variable (e.g., ~700)              |
+
 ## Usage
+
+### Jupyter Notebooks
 
 The primary usage and examples are demonstrated in the included Jupyter Notebooks.
 
-  * **`StepDrop_in_Stable_Diffusion_1.5.ipynb`**: Demonstrates how to apply StepDrop to the Stable Diffusion 1.5 model.
-  * **`StepDrop_in_Tiny_Diffusion.ipynb`**: Shows the core StepDrop implementation with a smaller, tiny diffusion model.
+- **`StepDrop_in_Stable_Diffusion_1.5.ipynb`**: Demonstrates how to apply StepDrop to the Stable Diffusion 1.5 model.
+- **`StepDrop_in_Tiny_Diffusion.ipynb`**: Shows the core StepDrop implementation with a smaller, tiny diffusion model.
 
 Open and run these notebooks in a Jupyter environment to see how StepDrop is implemented and test its performance.
 
@@ -101,16 +119,33 @@ Open and run these notebooks in a Jupyter environment to see how StepDrop is imp
 jupyter notebook
 ```
 
+### Command Line Interface (CLI)
+
+We provide a powerful benchmarking harness to evaluate model speed and quality (FID/IS) from the terminal.
+
+**Run Benchmark:**
+
+```bash
+# Dry run with dummy model (verify setup)
+python scripts/benchmark_strategies.py --dummy --samples 10
+
+# Full evaluation with trained model
+python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --samples 5000
+```
+
+- **Result**: Generates a `results/YYYY-MM-DD.../` folder with a `report.json` and sample images.
+- **Help**: Run `python scripts/benchmark_strategies.py --help` for full options.
+
 <p align="right"\>(<a href="#readme-top"\>back to top\<a\>)\<p\>
 
 ## Roadmap
 
-  - [x] Core StepDrop sampler implementation
-  - [x] Example notebook for Tiny Diffusion
-  - [x] Example notebook for Stable Diffusion 1.5
-  - [ ] Package the sampler as a pip-installable library
-  - [ ] Add support for more diffusion schedulers
-  - [ ] Integrate directly into the `diffusers` library
+- [x] Core StepDrop sampler implementation
+- [x] Example notebook for Tiny Diffusion
+- [x] Example notebook for Stable Diffusion 1.5
+- [ ] Package the sampler as a pip-installable library
+- [ ] Add support for more diffusion schedulers
+- [ ] Integrate directly into the `diffusers` library
 
 See the [open issues](https://www.google.com/search?q=https://github.com/wanghley/stepdrop-tiny-diffusion/issues) for a full list of proposed features and known issues.
 
@@ -144,13 +179,14 @@ Project Link: [https://github.com/wanghley/stepdrop-tiny-diffusion](https://gith
 
 ## Acknowledgments
 
-  * [Hugging Face Diffusers](https://github.com/huggingface/diffusers)
-  * [Choose an Open Source License](https://choosealicense.com)
-  * [Img Shields](https://shields.io)
+- [Hugging Face Diffusers](https://github.com/huggingface/diffusers)
+- [Choose an Open Source License](https://choosealicense.com)
+- [Img Shields](https://shields.io)
 
 <p align="right">(<a href="#readme-top">back to top<a\>)<p\>
 
 <!-- MARKDOWN LINKS & IMAGES -->
+
 [contributors-shield]: https://img.shields.io/github/contributors/wanghley/stepdrop-tiny-diffusion?style=for-the-badge
 [contributors-url]: https://github.com/wanghley/stepdrop-tiny-diffusion/graphs/contributors
 [forks-shield]: https://img.shields.io/github/forks/wanghley/stepdrop-tiny-diffusion.svg?style=for-the-badge
