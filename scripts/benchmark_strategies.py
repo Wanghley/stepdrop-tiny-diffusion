@@ -528,6 +528,7 @@ class ComprehensiveBenchmarkRunner:
         result = StrategyResult(name=strategy.name)
         result.description = strategy.description
         result.nfe = strategy.expected_nfe
+        result.num_samples = num_samples
         
         print(f"\n{'='*60}")
         print(f"📊 Evaluating: {strategy.name}")
@@ -561,14 +562,12 @@ class ComprehensiveBenchmarkRunner:
                 fake_images = (fake_images + 1) / 2
             fake_images = fake_images.clamp(0, 1)
             
-            # Load and resize real images to match fake image size
+            # Load real images if not provided
             if real_images is None:
                 real_images = load_images_from_dir(real_data_dir, max_images=num_samples, normalize=False)
-            
-            # Ensure real images are in [0, 1] range
-            if real_images.min() < 0:
-                real_images = (real_images + 1) / 2
-            real_images = real_images.clamp(0, 1)
+                if real_images.min() < 0:
+                    real_images = (real_images + 1) / 2
+                real_images = real_images.clamp(0, 1)
             
             # Resize real images to match fake images if needed
             fake_h, fake_w = fake_images.shape[-2:]
@@ -586,18 +585,16 @@ class ComprehensiveBenchmarkRunner:
             # Handle channel mismatch (grayscale vs RGB)
             if fake_images.shape[1] != real_images.shape[1]:
                 if fake_images.shape[1] == 1 and real_images.shape[1] == 3:
-                    # Convert fake grayscale to RGB
                     fake_images = fake_images.repeat(1, 3, 1, 1)
                     print(f"      ⚠️ Converted fake images from grayscale to RGB for metrics")
                 elif fake_images.shape[1] == 3 and real_images.shape[1] == 1:
-                    # Convert real grayscale to RGB
                     real_images = real_images.repeat(1, 3, 1, 1)
                     print(f"      ⚠️ Converted real images from grayscale to RGB for metrics")
             
             # ==================== DISTRIBUTION METRICS ====================
             print(f"\n   📊 Computing Distribution Metrics...")
             
-            # FID (uses directories)
+            # FID
             print(f"      Computing FID...")
             try:
                 fid_result = compute_fid(real_data_dir, str(fake_dir), self.device)
@@ -605,14 +602,29 @@ class ComprehensiveBenchmarkRunner:
                 print(f"      ✅ FID: {result.fid:.2f}")
             except Exception as e:
                 print(f"      ⚠️ FID failed: {e}")
+                result.fid = -1.0
             
-            # KID - adjust subset_size based on number of samples
+            # Inception Score
+            print(f"      Computing Inception Score...")
+            try:
+                fake_for_is = fake_images
+                if fake_for_is.shape[1] == 1:
+                    fake_for_is = fake_for_is.repeat(1, 3, 1, 1)
+                is_result = compute_inception_score(fake_for_is, self.device)
+                result.is_mean = is_result.value
+                result.is_std = is_result.std if is_result.std else 0.0
+                print(f"      ✅ IS: {result.is_mean:.2f} ± {result.is_std:.2f}")
+            except Exception as e:
+                print(f"      ⚠️ IS failed: {e}")
+                result.is_mean = -1.0
+                result.is_std = 0.0
+            
+            # KID - only if full metrics and enough samples
             if self.compute_full_metrics:
                 print(f"      Computing KID...")
                 try:
-                    # KID subset_size must be <= number of samples
                     kid_subset = min(1000, num_samples // 2, len(real_images), len(fake_images))
-                    if kid_subset >= 10:  # Need reasonable subset for KID
+                    if kid_subset >= 10:
                         kid_result = compute_kid(real_images, fake_images, self.device, subset_size=kid_subset)
                         result.kid = kid_result.value
                         print(f"      ✅ KID: {result.kid:.4f}")
@@ -620,20 +632,6 @@ class ComprehensiveBenchmarkRunner:
                         print(f"      ⚠️ KID skipped: not enough samples (need at least 10)")
                 except Exception as e:
                     print(f"      ⚠️ KID failed: {e}")
-            
-            # Inception Score
-            print(f"      Computing Inception Score...")
-            try:
-                # IS needs RGB images in [0, 1] range
-                fake_for_is = fake_images
-                if fake_for_is.shape[1] == 1:
-                    fake_for_is = fake_for_is.repeat(1, 3, 1, 1)
-                is_result = compute_inception_score(fake_for_is, self.device)
-                result.is_mean = is_result.value
-                result.is_std = is_result.std
-                print(f"      ✅ IS: {result.is_mean:.2f} ± {result.is_std:.2f}")
-            except Exception as e:
-                print(f"      ⚠️ IS failed: {e}")
             
             # Precision/Recall
             if self.compute_full_metrics:
@@ -785,6 +783,8 @@ class ComprehensiveBenchmarkRunner:
             result.success = False
             result.error = str(e)
         
+        # Store result immediately
+        self.results[strategy.name] = result
         return result
     
     def run_all(
@@ -806,7 +806,13 @@ class ComprehensiveBenchmarkRunner:
         
         # Pre-load real images for efficiency
         print(f"\n📂 Pre-loading real images...")
-        real_images = load_images_from_dir(real_data_dir, max_images=num_samples)
+        real_images = load_images_from_dir(real_data_dir, max_images=num_samples, normalize=False)
+        
+        # Ensure real images are in [0, 1] range
+        if real_images.min() < 0:
+            real_images = (real_images + 1) / 2
+        real_images = real_images.clamp(0, 1)
+        
         print(f"   Loaded {len(real_images)} real images")
         
         # Pre-compute real features if using full metrics
@@ -816,10 +822,12 @@ class ComprehensiveBenchmarkRunner:
         
         for i, strategy in enumerate(strategies):
             print(f"\n[{i+1}/{len(strategies)}]", end="")
-            self.run_strategy(
+            result = self.run_strategy(
                 strategy, model, num_samples, batch_size, 
-                real_data_dir, real_images
+                real_data_dir, real_images.clone()  # Pass a copy to avoid modification
             )
+            # Store result with strategy name as key
+            self.results[strategy.name] = result
         
         self.save_report()
         self.print_summary()
@@ -870,6 +878,10 @@ class ComprehensiveBenchmarkRunner:
         print("📊 COMPREHENSIVE BENCHMARK SUMMARY")
         print("=" * 100)
         
+        if not self.results:
+            print("⚠️ No results to display")
+            return
+        
         # Header
         if self.compute_full_metrics:
             print(f"{'Strategy':<20} {'FID':>8} {'IS':>10} {'Prec':>8} {'Rec':>8} "
@@ -896,7 +908,6 @@ class ComprehensiveBenchmarkRunner:
                 is_str = f"{result.is_mean:.2f}±{result.is_std:.2f}" if result.is_mean > 0 else "N/A"
                 tp_str = f"{result.throughput:.2f} img/s" if result.throughput > 0 else "N/A"
                 nfe_str = str(result.nfe) if result.nfe > 0 else "N/A"
-                
                 print(f"{name:<25} {fid_str:>10} {is_str:>12} {tp_str:>15} {nfe_str:>8}")
         
         print("=" * 100)
@@ -907,6 +918,8 @@ class ComprehensiveBenchmarkRunner:
         if valid_results:
             best_fid = min(valid_results, key=lambda x: x.fid)
             print(f"   Best FID: {best_fid.name} ({best_fid.fid:.2f})")
+        else:
+            print("   No valid FID results")
         
         valid_is = [r for r in self.results.values() if r.is_mean > 0]
         if valid_is:
