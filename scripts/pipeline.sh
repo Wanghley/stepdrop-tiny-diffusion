@@ -51,6 +51,8 @@ DDIM_STEPS=50
 # Evaluation
 EVAL_SAMPLES=1000
 EVAL_BATCH_SIZE=32
+FULL_METRICS=false
+EVAL_STRATEGIES="all"
 
 # Pipeline flags
 DO_TRAIN=false
@@ -142,8 +144,14 @@ ${YELLOW}SAMPLING OPTIONS:${NC}
     --ddim-steps N      DDIM sampling steps (default: ${DDIM_STEPS})
 
 ${YELLOW}EVALUATION OPTIONS:${NC}
-    --eval-samples N    Samples for FID/IS evaluation (default: ${EVAL_SAMPLES})
+    --eval-samples N    Samples for evaluation (default: ${EVAL_SAMPLES})
     --eval-batch N      Evaluation batch size (default: ${EVAL_BATCH_SIZE})
+    --full-metrics      Compute ALL metrics (FID, KID, IS, Precision, Recall, 
+                        Density, Coverage, LPIPS, SSIM, PSNR, Vendi, etc.)
+    --strategies LIST   Comma-separated strategies to evaluate (default: all)
+                        Options: DDPM_1000, DDIM_100, DDIM_50, DDIM_25, DDIM_10,
+                                StepDrop_0.2, StepDrop_0.3, StepDrop_0.5,
+                                StepDrop_Cosine_0.3, StepDrop_Adaptive
 
 ${YELLOW}GENERAL OPTIONS:${NC}
     --device DEVICE     Device: cuda, cpu (default: ${DEVICE})
@@ -216,6 +224,8 @@ parse_args() {
             # Evaluation options
             --eval-samples) EVAL_SAMPLES="$2"; shift 2 ;;
             --eval-batch)   EVAL_BATCH_SIZE="$2"; shift 2 ;;
+            --full-metrics) FULL_METRICS=true; shift ;;
+            --strategies)   EVAL_STRATEGIES="$2"; shift 2 ;;
             
             # General options
             --device)       DEVICE="$2"; shift 2 ;;
@@ -484,25 +494,39 @@ evaluate_stage() {
     echo "  Checkpoint:    ${CHECKPOINT:-DUMMY}"
     echo "  Eval Samples:  ${EVAL_SAMPLES}"
     echo "  Batch Size:    ${EVAL_BATCH_SIZE}"
-    
-    # Ensure real data cache exists
-    log_info "Preparing real data cache for FID calculation..."
-    run_cmd "python -c \"
-import sys
-sys.path.append('.')
-from src.eval.metrics_utils import saveCifar10RealSub
-saveCifar10RealSub(numImages=${EVAL_SAMPLES})
-\""
+    echo "  Full Metrics:  ${FULL_METRICS:-false}"
+    echo "  Strategies:    ${EVAL_STRATEGIES:-all}"
     
     # Build evaluation command
     EVAL_CMD="python scripts/benchmark_strategies.py"
     EVAL_CMD+=" ${EVAL_MODE}"
     EVAL_CMD+=" --samples ${EVAL_SAMPLES}"
     EVAL_CMD+=" --batch_size ${EVAL_BATCH_SIZE}"
+    EVAL_CMD+=" --output_dir ${RESULTS_DIR}"
+    
+    # Add full metrics flag if set
+    if [ "$FULL_METRICS" = true ]; then
+        EVAL_CMD+=" --full-metrics"
+        log_info "Computing FULL metrics (FID, KID, IS, Precision, Recall, LPIPS, SSIM, etc.)"
+    else
+        log_info "Computing BASIC metrics (FID, IS, Throughput)"
+    fi
+    
+    # Add specific strategies if set
+    if [ -n "$EVAL_STRATEGIES" ] && [ "$EVAL_STRATEGIES" != "all" ]; then
+        EVAL_CMD+=" --strategies \"${EVAL_STRATEGIES}\""
+    fi
     
     # Run evaluation
-    log_info "Running benchmark..."
+    log_info "Running comprehensive benchmark..."
     run_cmd "${EVAL_CMD}"
+    
+    # Generate plots if results exist
+    LATEST_RESULT=$(ls -td ${RESULTS_DIR}/*/ 2>/dev/null | head -1)
+    if [ -n "$LATEST_RESULT" ] && [ -f "${LATEST_RESULT}report.json" ]; then
+        log_info "Generating plots..."
+        run_cmd "python scripts/plot_results.py --results ${RESULTS_DIR}"
+    fi
     
     log_success "Evaluation complete! Results saved to: ${RESULTS_DIR}/"
 }
