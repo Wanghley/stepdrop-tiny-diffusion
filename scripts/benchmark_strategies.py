@@ -303,8 +303,8 @@ def load_model(checkpoint_path: Optional[str], device: str, dummy: bool = False)
 
 def create_sampler(strategy: StrategyConfig, num_timesteps: int = 1000):
     """Create sampler based on strategy type."""
-    from scripts.ddpm_sampler import DDPMSampler
-    from scripts.ddim_sampler import DDIMSampler
+    from src.sampler.DDPM import DDPMSampler
+    from src.sampler.DDIM import DDIMSampler
     from scripts.step_skipper import StochasticStepSkipScheduler, AdaptiveStepSkipScheduler
     
     if strategy.type == "ddpm":
