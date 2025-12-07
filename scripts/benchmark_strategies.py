@@ -13,7 +13,6 @@ import numpy as np
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from scripts.step_skipper import StochasticStepSkipScheduler, AdaptiveStepSkipScheduler
 from scripts.ddpm_sampler import DDPMSampler
 from scripts.ddim_sampler import DDIMSampler
 from src.eval import metrics_utils
@@ -33,10 +32,11 @@ class BenchmarkRunner:
     - Total FLOPs (estimated)
     """
     
-    def __init__(self, output_dir: str = "results", device: str = "cuda"):
+    def __init__(self, output_dir: str = "results", device: str = "cuda", real_data_path: str = "data/fid_real_cifar10"):
         self.output_dir = Path(output_dir)
         self.device = device
         self.results = {}
+        self.real_data_path = real_data_path
         
         # Ensure output directory exists
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -60,121 +60,130 @@ class BenchmarkRunner:
         # model.load_state_dict(torch.load(checkpoint_path))
         raise NotImplementedError("Real model loading not yet implemented")
 
-    def run_strategy(
-        self, 
-        name: str, 
-        model: nn.Module, 
-        sampler_config: Dict[str, Any],
-        num_samples: int = 100,
-        batch_size: int = 16,
-        real_data_dir: str = "data/fid_real_cifar10"
-    ):
-        """
-        Runs a single benchmarking strategy.
-        """
+    def run_strategy(self, name: str, model: nn.Module, sampler_config: Dict[str, Any], num_samples: int, batch_size: int = 100):
         print(f"\n🚀 Running Strategy: {name}")
-        strategy_dir = self.output_dir / name
-        strategy_dir.mkdir(exist_ok=True)
         
-        # 1. Select Sampler
-        stype = sampler_config.pop("type")
-        if stype == "ddpm":
+        # Initialize Sampler
+        if "DDPM" in name:
             sampler = DDPMSampler(num_timesteps=1000)
-            sample_fn = lambda x, shape: sampler.sample(model, shape, device=self.device)
-            steps_per_iso = 1000
-        elif stype == "ddim":
-            steps = sampler_config.get("num_inference_steps", 50)
-            sampler = DDIMSampler(num_timesteps=1000)
-            sample_fn = lambda x, shape: sampler.sample(
-                model, shape, device=self.device, **sampler_config
-            )
-            steps_per_iso = steps
-        elif stype == "stepdrop":
-            sampler = StochasticStepSkipScheduler(num_timesteps=1000)
-            sample_fn = lambda x, shape: sampler.sample(
-                model, shape, device=self.device, return_stats=True, **sampler_config
-            )
-            # Steps will vary, we'll get average from stats
-            steps_per_iso = None 
+            sampler_args = {
+                "device": self.device,
+                "return_all_timesteps": False
+            }
         else:
-            raise ValueError(f"Unknown sampler type: {stype}")
+            # DDIM and StepDrop now both use DDIMSampler
+            sampler = DDIMSampler(num_timesteps=1000)
+            
+            # Default DDIM args
+            sampler_args = {
+                "num_inference_steps": sampler_config.get("num_inference_steps", 50),
+                "eta": sampler_config.get("eta", 0.0),
+                "device": self.device,
+                "return_all_timesteps": False,
+                "schedule_type": sampler_config.get("schedule_type", "uniform")
+            }
+            
+            # Handle Adaptive (StepDrop) params
+            if sampler_args["schedule_type"] == "adaptive":
+                sampler_args["adaptive_params"] = {
+                    "min_step": sampler_config.get("min_step", 5),
+                    "max_step": sampler_config.get("max_step", 50),
+                    "error_threshold_low": sampler_config.get("error_threshold_low", 0.05),
+                    "error_threshold_high": sampler_config.get("error_threshold_high", 0.15),
+                }
 
-        # 2. Measure FLOPs (per step)
-        # We assume 3x32x32 input for CIFAR
-        single_step_flops = metrics_utils.computeFLOPs(model, (1, 3, 32, 32), device=self.device)
+        # 1. Compute FLOPs (Theoretical)
+        # For StepDrop, we ideally want average actual steps, but theoretical FLOPs 
+        # is usually calculated per pure model call. 
+        # We will track *actual* model calls during sampling.
+        single_step_flops = metrics_utils.computeFLOPs(model, (1, 3, 32, 32), self.device)
         
-        # 3. Generate Samples & Measure Latency
+        # 2. Generate Samples & Measure Latency
         print(f"   Generating {num_samples} samples...")
         start_time = time.time()
         
-        generated_count = 0
+        # We need to batch generation to avoid OOM
+        # batch_size arg is used here
+        all_samples = []
         total_steps_executed = 0
         
-        # Wrapper for saveFakeImages
-        def generator_wrapper(n_imgs):
-            nonlocal generated_count, total_steps_executed
-            # We need to reshape slightly because saveFakeImages calls this in a loop
-            # But our sample_fn handles batching logic if we just pass shape
-            
-            # Since saveFakeImages asks for n_imgs, we perform one batch of size n_imgs
-            # Note: simplistic handling, assuming n_imgs fits in VRAM for this bench
-            current_batch = n_imgs
-            
-            # Handle return_stats for StepDrop
-            result = sample_fn(None, (current_batch, 3, 32, 32))
-            
-            if isinstance(result, tuple):
-                imgs, stats = result
-                total_steps_executed += stats["steps_executed"]
-            else:
-                imgs = result
-                total_steps_executed += steps_per_iso * current_batch
-                
-            generated_count += current_batch
-            return imgs
-            
-        # Run generation via the utility which saves images
-        # We'll use a larger batch size for the metric utility's loop
-        fake_images_dir = metrics_utils.saveFakeImages(
-            generator_wrapper,
-            outDir=str(strategy_dir / "samples"),
-            numImages=num_samples,
-            batchSize=batch_size,
-            device=self.device
-        )
+        # Determine how many batches
+        n_batches = (num_samples + batch_size - 1) // batch_size
         
-        end_time = time.time()
-        duration = end_time - start_time
-        throughput = num_samples / duration
+        for i in metrics_utils.tqdm(range(n_batches), desc="Generating batches"):
+            current_batch_size = min(batch_size, num_samples - i * batch_size)
+            shape = (current_batch_size, 3, 32, 32)
+            
+            with torch.no_grad():
+                result = sampler.sample(model, shape, **sampler_args)
+            
+            # Handle different return types (DDPM returns tensor, DDIM returns dict)
+            if isinstance(result, dict):
+                batch_samples = result['samples']
+                # Count steps for FLOPs calculation
+                if 'timesteps_used' in result:
+                    total_steps_executed += len(result['timesteps_used']) * current_batch_size
+                else:
+                    # Fallback if specific steps not returned, assume max
+                    total_steps_executed += sampler_args.get("num_inference_steps", 50) * current_batch_size
+            else:
+                batch_samples = result
+                # DDPM always runs full steps
+                total_steps_executed += 1000 * current_batch_size
+                
+            all_samples.append(batch_samples.cpu())
+            
+        duration = time.time() - start_time
+        fps = num_samples / duration
+        
+        # Concatenate all batches
+        samples = torch.cat(all_samples, dim=0)
+        
+        # Normalize and Save Images
+        # Assuming model output is [-1, 1], normalize to [0, 1]
+        samples = (samples + 1) / 2
+        samples = torch.clamp(samples, 0, 1)
+        
+        # Save samples to disk
+        strategy_dir = self.output_dir / name
+        strategy_dir.mkdir(exist_ok=True)
+        
+        # Clear existing images
+        for f in strategy_dir.glob("*.png"):
+            f.unlink()
+            
+        # Save images
+        for idx, img in enumerate(samples):
+            # img is [C, H, W] in [0, 1]
+            from torchvision.utils import save_image
+            save_image(img, strategy_dir / f"{idx:06d}.png")
+        
+        # 3. Calculate Metrics
         avg_steps = total_steps_executed / num_samples
         total_flops = single_step_flops * avg_steps
         
-        print(f"   ⏱️ Duration: {duration:.2f}s ({throughput:.2f} img/s)")
+        print(f"   ⏱️ Duration: {duration:.2f}s ({fps:.2f} img/s)")
         print(f"   🔢 Avg Steps: {avg_steps:.1f}")
         
-        # 4. Compute Metrics (FID, IS)
         print("   Computing Metrics...")
-        try:
-            fid = metrics_utils.computeFID(real_data_dir, str(fake_images_dir), device=self.device)
-            is_mean, is_std = metrics_utils.computeInceptionScore(str(fake_images_dir), device=self.device)
-        except Exception as e:
-            print(f"   ⚠️ Metric calculation failed: {e}")
-            fid, is_mean, is_std = -1, -1, -1
-
+        fid = metrics_utils.computeFID(self.real_data_path, str(strategy_dir), self.device)
+        is_mean, is_std = metrics_utils.computeInceptionScore(str(strategy_dir), self.device)
+        
         print(f"   📉 FID: {fid:.2f}")
         print(f"   📈 IS: {is_mean:.2f}")
         
-        # 5. Store Results
+        # Store results
         self.results[name] = {
-            "duration_sec": duration,
-            "throughput": throughput,
-            "avg_steps": avg_steps,
+            "duration": duration,
+            "throughput": fps,
             "fid": fid,
             "is_mean": is_mean,
             "is_std": is_std,
-            "flops_per_sample": total_flops,
-            "config": sampler_config
+            "avg_steps": avg_steps,
+            "flops_per_sample": total_flops
         }
+        
+        # Save incremental report
         self.save_report()
 
     def save_report(self):
@@ -228,19 +237,25 @@ OUTPUT:
     strategies = [
         {
             "name": "DDPM_Baseline",
-            "config": {"type": "ddpm"}
+            "config": {}
         },
         {
-            "name": "DDIM_50",
-            "config": {"type": "ddim", "num_inference_steps": 50, "eta": 0.0}
+            "name": "DDIM_Uniform_50",
+            "config": {"num_inference_steps": 50, "eta": 0.0, "schedule_type": "uniform"}
         },
         {
-            "name": "StepDrop_Linear_0.3",
-            "config": {"type": "stepdrop", "skip_strategy": "linear", "base_skip_prob": 0.3}
+            "name": "DDIM_Cosine_50",
+            "config": {"num_inference_steps": 50, "eta": 0.0, "schedule_type": "cosine"}
         },
         {
-            "name": "StepDrop_Adaptive_0.2",
-            "config": {"type": "stepdrop", "skip_strategy": "adaptive", "base_skip_prob": 0.2}
+            "name": "StepDrop_Adaptive",
+            "config": {
+                "schedule_type": "adaptive", 
+                "min_step": 5, 
+                "max_step": 50,
+                "error_threshold_low": 0.05,
+                "error_threshold_high": 0.15
+            }
         }
     ]
     
@@ -255,8 +270,7 @@ OUTPUT:
             model,
             strategy["config"],
             num_samples=args.samples,
-            batch_size=args.batch_size,
-            real_data_dir="data/fid_real_cifar10"
+            batch_size=args.batch_size
         )
         
     runner.save_report()
