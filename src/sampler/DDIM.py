@@ -1,39 +1,131 @@
+"""
+DDIM Sampler
+============
+
+Denoising Diffusion Implicit Models (DDIM) sampler.
+
+Reference: Song et al., "Denoising Diffusion Implicit Models" (2020)
+https://arxiv.org/abs/2010.02502
+"""
+
 import torch
 import torch.nn as nn
 import numpy as np
-import argparse
-from pathlib import Path
+from typing import Optional
+from tqdm import tqdm
+
 
 class DDIMSampler:
-    """Denoising Diffusion Implicit Models Sampling"""
-    def __init__(self, num_timesteps: int = 1000, num_inference_steps: int = 50, eta: float = 0.0):
+    """
+    Denoising Diffusion Implicit Models (DDIM) Sampler.
+    
+    DDIM enables faster sampling by skipping timesteps while maintaining
+    sample quality. With eta=0, the process is deterministic.
+    
+    Args:
+        num_timesteps: Total number of diffusion timesteps (default: 1000)
+        num_inference_steps: Number of steps for sampling (default: 50)
+        eta: Stochasticity parameter (0=deterministic, 1=DDPM-like)
+        beta_schedule: Type of beta schedule ("cosine" or "linear")
+    
+    Example:
+        >>> sampler = DDIMSampler(num_timesteps=1000, num_inference_steps=50)
+        >>> samples = sampler.sample(model, (16, 3, 32, 32), device="cuda")
+    """
+    
+    def __init__(
+        self, 
+        num_timesteps: int = 1000, 
+        num_inference_steps: int = 50, 
+        eta: float = 0.0,
+        beta_schedule: str = "cosine",
+        beta_start: float = 1e-4,
+        beta_end: float = 0.02
+    ):
         self.num_timesteps = num_timesteps
         self.num_inference_steps = num_inference_steps
         self.eta = eta
-        self.betas = self._cosine_beta_schedule(num_timesteps)
+        
+        # Compute beta schedule
+        if beta_schedule == "cosine":
+            self.betas = self._cosine_beta_schedule(num_timesteps)
+        elif beta_schedule == "linear":
+            self.betas = torch.linspace(beta_start, beta_end, num_timesteps)
+        else:
+            raise ValueError(f"Unknown beta schedule: {beta_schedule}")
         
         # Pre-compute alphas
         self.alphas = 1.0 - self.betas
         self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
     
-    def _cosine_beta_schedule(self, timesteps: int, s: float = 0.008):
+    def _cosine_beta_schedule(self, timesteps: int, s: float = 0.008) -> torch.Tensor:
+        """Cosine schedule from Improved DDPM paper."""
         steps = timesteps + 1
         x = torch.linspace(0, timesteps, steps)
         alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * torch.pi * 0.5) ** 2
         alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
         betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-        return torch.clip(betas, 0.0001, 0.9999)
+        return torch.clamp(betas, 0.0001, 0.9999)
+    
+    def _get_timesteps(
+        self, 
+        num_inference_steps: int,
+        schedule: str = "uniform"
+    ) -> np.ndarray:
+        """
+        Get timestep schedule for sampling.
+        
+        Args:
+            num_inference_steps: Number of sampling steps
+            schedule: Schedule type ("uniform", "quadratic", "cosine")
+        
+        Returns:
+            Array of timesteps from high to low
+        """
+        if schedule == "uniform":
+            step_ratio = self.num_timesteps // num_inference_steps
+            timesteps = (np.arange(0, num_inference_steps) * step_ratio).round()[::-1]
+        elif schedule == "quadratic":
+            t_normalized = np.linspace(0, 1, num_inference_steps)
+            timesteps = (self.num_timesteps - 1) * (1 - t_normalized) ** 2
+        elif schedule == "cosine":
+            t_normalized = np.linspace(0, 1, num_inference_steps)
+            timesteps = (self.num_timesteps - 1) * (np.cos(t_normalized * np.pi / 2) ** 2)
+        else:
+            raise ValueError(f"Unknown schedule: {schedule}")
+        
+        return timesteps.round().astype(np.int64)
     
     @torch.no_grad()
     def sample(
-        self, 
-        model: nn.Module, 
-        shape: tuple, 
-        num_inference_steps: int = None, 
-        eta: float = None, 
-        device: str = "cuda", 
-        return_all_timesteps: bool = False
-    ):
+        self,
+        model: nn.Module,
+        shape: tuple,
+        num_inference_steps: Optional[int] = None,
+        eta: Optional[float] = None,
+        device: str = "cuda",
+        return_all_timesteps: bool = False,
+        show_progress: bool = True,
+        clip_denoised: bool = True,
+        schedule: str = "uniform"
+    ) -> torch.Tensor:
+        """
+        Generate samples using DDIM reverse process.
+        
+        Args:
+            model: Noise prediction model ε_θ(x_t, t)
+            shape: Output shape (batch_size, channels, height, width)
+            num_inference_steps: Override default inference steps
+            eta: Override default eta (0=deterministic, 1=stochastic)
+            device: Device to run sampling on
+            return_all_timesteps: If True, return all intermediate samples
+            show_progress: If True, show progress bar
+            clip_denoised: If True, clip predicted x_0 to [-1, 1]
+            schedule: Timestep schedule ("uniform", "quadratic", "cosine")
+        
+        Returns:
+            Generated samples of shape `shape`
+        """
         batch_size = shape[0]
         
         # Use instance defaults if not provided
@@ -42,9 +134,8 @@ class DDIMSampler:
         if eta is None:
             eta = self.eta
         
-        # Create subsequence of timesteps
-        step_ratio = self.num_timesteps // num_inference_steps
-        timesteps = (np.arange(0, num_inference_steps) * step_ratio).round()[::-1].copy().astype(np.int64)
+        # Get timestep schedule
+        timesteps = self._get_timesteps(num_inference_steps, schedule)
         timesteps = torch.from_numpy(timesteps).to(device)
         
         # Start from pure noise
@@ -52,8 +143,12 @@ class DDIMSampler:
         
         all_samples = [x] if return_all_timesteps else None
         
-        # Iteratively denoise
-        for i, t in enumerate(timesteps):
+        # Reverse process
+        iterator = enumerate(timesteps)
+        if show_progress:
+            iterator = tqdm(iterator, desc="DDIM Sampling", total=len(timesteps))
+        
+        for i, t in iterator:
             t_batch = torch.full((batch_size,), t, device=device, dtype=torch.long)
             
             # Predict noise
@@ -62,27 +157,29 @@ class DDIMSampler:
             # Get alpha values
             alpha_cumprod_t = self.alphas_cumprod[t].to(device)
             
-            # Predict x_0
+            # Predict x_0: x_0 = (x_t - √(1-ᾱ_t) * ε) / √ᾱ_t
             pred_x0 = (x - torch.sqrt(1 - alpha_cumprod_t) * predicted_noise) / torch.sqrt(alpha_cumprod_t)
-            pred_x0 = torch.clamp(pred_x0, -1, 1)  # Optional: clip for stability
             
-            # Get previous timestep
+            if clip_denoised:
+                pred_x0 = torch.clamp(pred_x0, -1, 1)
+            
+            # Get previous timestep alpha
             if i < len(timesteps) - 1:
                 t_prev = timesteps[i + 1]
                 alpha_cumprod_t_prev = self.alphas_cumprod[t_prev].to(device)
             else:
-                alpha_cumprod_t_prev = torch.tensor(1.0).to(device)
+                alpha_cumprod_t_prev = torch.tensor(1.0, device=device)
             
-            # Compute variance
+            # Compute variance: σ_t = η * √((1-ᾱ_{t-1})/(1-ᾱ_t)) * √(1-ᾱ_t/ᾱ_{t-1})
             sigma_t = eta * torch.sqrt(
                 (1 - alpha_cumprod_t_prev) / (1 - alpha_cumprod_t) *
                 (1 - alpha_cumprod_t / alpha_cumprod_t_prev)
             )
             
-            # Compute direction pointing to x_t
+            # Direction pointing to x_t
             dir_xt = torch.sqrt(1 - alpha_cumprod_t_prev - sigma_t**2) * predicted_noise
             
-            # Add noise
+            # Add noise (only if not last step and eta > 0)
             if i < len(timesteps) - 1 and eta > 0:
                 noise = torch.randn_like(x)
             else:
@@ -97,6 +194,10 @@ class DDIMSampler:
         if return_all_timesteps:
             return torch.stack(all_samples)
         return x
+    
+    def get_nfe(self) -> int:
+        """Return number of function evaluations (NFE) per sample."""
+        return self.num_inference_steps
 
 
 def main():
