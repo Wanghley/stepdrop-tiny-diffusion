@@ -47,6 +47,8 @@ DATA_DIR="./data"
 N_SAMPLES=64
 SAMPLE_METHOD="ddim"
 DDIM_STEPS=50
+SKIP_PROB=0.3
+SKIP_STRATEGY="linear"
 
 # Evaluation
 EVAL_SAMPLES=1000
@@ -66,6 +68,8 @@ CUSTOM_DATA_DIR=""
 DEVICE="cuda"
 DRY_RUN=false
 VERBOSE=false
+COMPARE_STEPDROP=false
+STEPDROP_ONLY=false
 
 # -----------------------------------------------------------------------------
 # Color Output
@@ -140,8 +144,12 @@ ${YELLOW}TRAINING OPTIONS:${NC}
 ${YELLOW}SAMPLING OPTIONS:${NC}
     --checkpoint PATH   Path to model checkpoint (required for --sample without --train)
     --n-samples N       Number of samples to generate (default: ${N_SAMPLES})
-    --method METHOD     Sampling method: ddpm, ddim (default: ${SAMPLE_METHOD})
+    --method METHOD     Sampling method: ddpm, ddim, stepdrop, adaptive_stepdrop (default: ${SAMPLE_METHOD})
     --ddim-steps N      DDIM sampling steps (default: ${DDIM_STEPS})
+    --skip-prob P       StepDrop skip probability 0.0-1.0 (default: ${SKIP_PROB})
+    --skip-strategy S   StepDrop strategy (default: ${SKIP_STRATEGY})
+                        Options: constant, linear, cosine_sq, quadratic,
+                                 early_skip, late_skip, critical_preserve
 
 ${YELLOW}EVALUATION OPTIONS:${NC}
     --eval-samples N    Samples for evaluation (default: ${EVAL_SAMPLES})
@@ -150,8 +158,12 @@ ${YELLOW}EVALUATION OPTIONS:${NC}
                         Density, Coverage, LPIPS, SSIM, PSNR, Vendi, etc.)
     --strategies LIST   Comma-separated strategies to evaluate (default: all)
                         Options: DDPM_1000, DDIM_100, DDIM_50, DDIM_25, DDIM_10,
-                                StepDrop_0.2, StepDrop_0.3, StepDrop_0.5,
-                                StepDrop_Cosine_0.3, StepDrop_Adaptive
+                                StepDrop_Linear_0.3, StepDrop_Linear_0.5,
+                                StepDrop_CosineSq_0.3, StepDrop_CosineSq_0.5,
+                                StepDrop_Quadratic_0.3, StepDrop_Quadratic_0.5,
+                                StepDrop_Adaptive
+    --compare-stepdrop  Compare all StepDrop strategies against baselines
+    --stepdrop-only     Evaluate only StepDrop strategies (skip DDPM/DDIM)
 
 ${YELLOW}GENERAL OPTIONS:${NC}
     --device DEVICE     Device: cuda, cpu (default: ${DEVICE})
@@ -173,8 +185,23 @@ ${YELLOW}EXAMPLES:${NC}
     # Sample from trained model
     ./pipeline.sh --sample --checkpoint checkpoints/cifar_model.pt --n-samples 64
 
+    # Sample with StepDrop
+    ./pipeline.sh --sample --checkpoint checkpoints/model.pt --method stepdrop --skip-prob 0.3 --skip-strategy linear
+
+    # Sample with different StepDrop strategies
+    ./pipeline.sh --sample --method stepdrop --skip-strategy quadratic --skip-prob 0.5
+
     # Run full benchmark
     ./pipeline.sh --evaluate --checkpoint checkpoints/model.pt --eval-samples 5000
+
+    # Compare all StepDrop strategies against DDIM
+    ./pipeline.sh --evaluate --checkpoint checkpoints/model.pt --compare-stepdrop --eval-samples 1000
+
+    # Evaluate only StepDrop strategies
+    ./pipeline.sh --evaluate --checkpoint checkpoints/model.pt --stepdrop-only --full-metrics
+
+    # Specific strategies only
+    ./pipeline.sh --evaluate --strategies "DDIM_50,StepDrop_Linear_0.3,StepDrop_Quadratic_0.3"
 
     # Custom dataset
     ./pipeline.sh --all --dataset custom --custom-data /path/to/images --img-size 64
@@ -220,12 +247,16 @@ parse_args() {
             --n-samples)    N_SAMPLES="$2"; shift 2 ;;
             --method)       SAMPLE_METHOD="$2"; shift 2 ;;
             --ddim-steps)   DDIM_STEPS="$2"; shift 2 ;;
+            --skip-prob)    SKIP_PROB="$2"; shift 2 ;;
+            --skip-strategy) SKIP_STRATEGY="$2"; shift 2 ;;
             
             # Evaluation options
             --eval-samples) EVAL_SAMPLES="$2"; shift 2 ;;
             --eval-batch)   EVAL_BATCH_SIZE="$2"; shift 2 ;;
             --full-metrics) FULL_METRICS=true; shift ;;
             --strategies)   EVAL_STRATEGIES="$2"; shift 2 ;;
+            --compare-stepdrop) COMPARE_STEPDROP=true; shift ;;
+            --stepdrop-only) STEPDROP_ONLY=true; shift ;;
             
             # General options
             --device)       DEVICE="$2"; shift 2 ;;
@@ -440,6 +471,9 @@ sample_stage() {
     echo "  Method:        ${SAMPLE_METHOD}"
     if [ "$SAMPLE_METHOD" = "ddim" ]; then
         echo "  DDIM Steps:    ${DDIM_STEPS}"
+    elif [ "$SAMPLE_METHOD" = "stepdrop" ] || [ "$SAMPLE_METHOD" = "adaptive_stepdrop" ]; then
+        echo "  Skip Prob:     ${SKIP_PROB}"
+        echo "  Skip Strategy: ${SKIP_STRATEGY}"
     fi
     echo "  Output Dir:    ${OUTPUT_DIR}"
     
@@ -456,6 +490,9 @@ sample_stage() {
     
     if [ "$SAMPLE_METHOD" = "ddim" ]; then
         SAMPLE_CMD+=" --ddim_steps ${DDIM_STEPS}"
+    elif [ "$SAMPLE_METHOD" = "stepdrop" ] || [ "$SAMPLE_METHOD" = "adaptive_stepdrop" ]; then
+        SAMPLE_CMD+=" --skip_prob ${SKIP_PROB}"
+        SAMPLE_CMD+=" --skip_strategy ${SKIP_STRATEGY}"
     fi
     
     # Run sampling
@@ -488,6 +525,17 @@ evaluate_stage() {
             exit 1
         fi
         EVAL_MODE="--checkpoint ${CHECKPOINT}"
+    fi
+    
+    # Determine which strategies to evaluate
+    if [ "$COMPARE_STEPDROP" = true ]; then
+        # Compare all StepDrop variants against DDIM baselines
+        EVAL_STRATEGIES="DDIM_50,DDIM_25,StepDrop_Linear_0.3,StepDrop_Linear_0.5,StepDrop_CosineSq_0.3,StepDrop_Quadratic_0.3,StepDrop_Adaptive"
+        log_info "Mode: Comparing StepDrop strategies against DDIM baselines"
+    elif [ "$STEPDROP_ONLY" = true ]; then
+        # Only StepDrop strategies
+        EVAL_STRATEGIES="StepDrop_Linear_0.3,StepDrop_Linear_0.5,StepDrop_CosineSq_0.3,StepDrop_CosineSq_0.5,StepDrop_Quadratic_0.3,StepDrop_Quadratic_0.5,StepDrop_Adaptive"
+        log_info "Mode: Evaluating only StepDrop strategies"
     fi
     
     log_info "Evaluation configuration:"
