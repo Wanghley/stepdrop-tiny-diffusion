@@ -69,7 +69,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip_prob", type=float, default=0.3,
                         help="StepDrop skip probability")
     parser.add_argument("--skip_strategy", type=str, default="linear",
-                        choices=["constant", "linear", "cosine", "early_skip", "late_skip"],
+                        choices=["constant", "linear", "cosine_sq", "quadratic", 
+                                 "early_skip", "late_skip", "critical_preserve"],
                         help="StepDrop skip strategy")
     parser.add_argument("--batch_size", type=int, default=16,
                         help="Batch size for generation")
