@@ -1,8 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 class SinusoidalPositionEmbeddings(nn.Module):
+    """Sinusoidal time embeddings"""
     def __init__(self, dim):
         super().__init__()
         self.dim = dim
@@ -10,103 +12,173 @@ class SinusoidalPositionEmbeddings(nn.Module):
     def forward(self, time):
         device = time.device
         half_dim = self.dim // 2
-        embeddings = torch.log(torch.tensor(10000)) / (half_dim - 1)
+        embeddings = math.log(10000) / (half_dim - 1)
         embeddings = torch.exp(torch.arange(half_dim, device=device) * -embeddings)
-        embeddings = time[:, None] * embeddings[None, :]
+        embeddings = time[:, None].float() * embeddings[None, :]
         embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
         return embeddings
 
-class Block(nn.Module):
-    def __init__(self, in_ch, out_ch, time_emb_dim, up=False):
-        super().__init__()
-        self.time_mlp =  nn.Linear(time_emb_dim, out_ch)
-        
-        # Determine if we are upsampling or just convolving
-        if up:
-            self.conv1 = nn.Conv2d(in_ch, out_ch, 3, padding=1)
-            self.transform = nn.ConvTranspose2d(out_ch, out_ch, 4, 2, 1)
-        else:
-            self.conv1 = nn.Conv2d(in_ch, out_ch, 3, padding=1)
-            self.transform = nn.Conv2d(out_ch, out_ch, 4, 2, 1)
-        
-        self.conv2 = nn.Conv2d(out_ch, out_ch, 3, padding=1)
-        self.bnorm1 = nn.BatchNorm2d(out_ch)
-        self.bnorm2 = nn.BatchNorm2d(out_ch)
-        self.relu  = nn.ReLU()
 
-    def forward(self, x, t):
-        h = self.bnorm1(self.relu(self.conv1(x)))
+class ResidualBlock(nn.Module):
+    """Residual block with time embedding injection"""
+    def __init__(self, in_channels, out_channels, time_emb_dim, dropout=0.1):
+        super().__init__()
         
-        # Inject Time Embedding
-        time_emb = self.relu(self.time_mlp(t))
-        time_emb = time_emb[(..., ) + (None, ) * 2]
-        h = h + time_emb
+        self.time_mlp = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(time_emb_dim, out_channels)
+        )
         
-        h = self.bnorm2(self.relu(self.conv2(h)))
-        return self.transform(h)
+        self.block1 = nn.Sequential(
+            nn.GroupNorm(8, in_channels),
+            nn.SiLU(),
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        )
+        
+        self.block2 = nn.Sequential(
+            nn.GroupNorm(8, out_channels),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        )
+        
+        # Skip connection
+        if in_channels != out_channels:
+            self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+        else:
+            self.shortcut = nn.Identity()
+    
+    def forward(self, x, t_emb):
+        h = self.block1(x)
+        
+        # Add time embedding
+        t_emb = self.time_mlp(t_emb)[:, :, None, None]
+        h = h + t_emb
+        
+        h = self.block2(h)
+        return h + self.shortcut(x)
+
+
+class AttentionBlock(nn.Module):
+    """Self-attention block"""
+    def __init__(self, channels):
+        super().__init__()
+        self.norm = nn.GroupNorm(8, channels)
+        self.attention = nn.MultiheadAttention(channels, num_heads=4, batch_first=True)
+    
+    def forward(self, x):
+        b, c, h, w = x.shape
+        x_norm = self.norm(x)
+        x_flat = x_norm.view(b, c, h * w).permute(0, 2, 1)  # (B, H*W, C)
+        attn_out, _ = self.attention(x_flat, x_flat, x_flat)
+        attn_out = attn_out.permute(0, 2, 1).view(b, c, h, w)
+        return x + attn_out
+
+
+class DownBlock(nn.Module):
+    """Downsampling block"""
+    def __init__(self, in_channels, out_channels, time_emb_dim, has_attention=False):
+        super().__init__()
+        self.res1 = ResidualBlock(in_channels, out_channels, time_emb_dim)
+        self.res2 = ResidualBlock(out_channels, out_channels, time_emb_dim)
+        self.attention = AttentionBlock(out_channels) if has_attention else nn.Identity()
+        self.downsample = nn.Conv2d(out_channels, out_channels, kernel_size=4, stride=2, padding=1)
+    
+    def forward(self, x, t_emb):
+        x = self.res1(x, t_emb)
+        x = self.res2(x, t_emb)
+        x = self.attention(x)
+        skip = x
+        x = self.downsample(x)
+        return x, skip
+
+
+class UpBlock(nn.Module):
+    """Upsampling block"""
+    def __init__(self, in_channels, out_channels, time_emb_dim, has_attention=False):
+        super().__init__()
+        self.upsample = nn.ConvTranspose2d(in_channels, in_channels, kernel_size=4, stride=2, padding=1)
+        self.res1 = ResidualBlock(in_channels + out_channels, out_channels, time_emb_dim)  # concat skip
+        self.res2 = ResidualBlock(out_channels, out_channels, time_emb_dim)
+        self.attention = AttentionBlock(out_channels) if has_attention else nn.Identity()
+    
+    def forward(self, x, skip, t_emb):
+        x = self.upsample(x)
+        
+        # Handle size mismatch
+        if x.shape[2:] != skip.shape[2:]:
+            x = F.interpolate(x, size=skip.shape[2:], mode='bilinear', align_corners=False)
+        
+        x = torch.cat([x, skip], dim=1)
+        x = self.res1(x, t_emb)
+        x = self.res2(x, t_emb)
+        x = self.attention(x)
+        return x
+
 
 class TinyUNet(nn.Module):
-    def __init__(self, img_size=28, channels=1, base_channels=32):
+    """Improved U-Net for diffusion"""
+    def __init__(self, img_size=28, channels=1, base_channels=64, time_emb_dim=128):
         super().__init__()
         self.channels = channels
         self.img_size = img_size
-        time_dim = 32
-
-        # Time Embedding MLP
+        
+        # Time embedding
         self.time_mlp = nn.Sequential(
-            SinusoidalPositionEmbeddings(time_dim),
-            nn.Linear(time_dim, time_dim),
-            nn.ReLU()
+            SinusoidalPositionEmbeddings(time_emb_dim),
+            nn.Linear(time_emb_dim, time_emb_dim * 4),
+            nn.GELU(),
+            nn.Linear(time_emb_dim * 4, time_emb_dim)
         )
         
-        # Initial Projection
-        self.conv0 = nn.Conv2d(channels, base_channels, 3, padding=1)
-
-        # Down Path
-        self.down1 = Block(base_channels, 64, time_dim) # 32 -> 64
-        self.down2 = Block(64, 128, time_dim)           # 64 -> 128
+        # Initial conv
+        self.init_conv = nn.Conv2d(channels, base_channels, kernel_size=3, padding=1)
+        
+        # Encoder (Downsampling path)
+        self.down1 = DownBlock(base_channels, base_channels, time_emb_dim)           # 28 -> 14
+        self.down2 = DownBlock(base_channels, base_channels * 2, time_emb_dim)       # 14 -> 7
         
         # Bottleneck
-        self.bot1 = Block(128, 256, time_dim)           # 128 -> 256
+        self.bottleneck = nn.Sequential(
+            ResidualBlock(base_channels * 2, base_channels * 4, time_emb_dim),
+            AttentionBlock(base_channels * 4),
+            ResidualBlock(base_channels * 4, base_channels * 2, time_emb_dim),
+        )
         
-        # Up Path
-        # up1 receives 256 from bot1
-        self.up1 = Block(256, 128, time_dim, up=True)   
+        # Decoder (Upsampling path)
+        self.up1 = UpBlock(base_channels * 2, base_channels * 2, time_emb_dim)       # 7 -> 14
+        self.up2 = UpBlock(base_channels * 2, base_channels, time_emb_dim)           # 14 -> 28
         
-        # up2 receives 256 (128 from up1 + 128 from d2 skip connection)
-        self.up2 = Block(256, 64, time_dim, up=True)    
-        
-        # Output Layer
-        # FIXED: Receives 128 (64 from up2 + 64 from d1 skip connection)
-        self.out = nn.Conv2d(128, channels, 1)
-
+        # Output
+        self.final_conv = nn.Sequential(
+            nn.GroupNorm(8, base_channels),
+            nn.SiLU(),
+            nn.Conv2d(base_channels, channels, kernel_size=3, padding=1)
+        )
+    
     def forward(self, x, timestep):
-        t = self.time_mlp(timestep)
+        # Time embedding
+        t_emb = self.time_mlp(timestep)
         
-        x0 = self.conv0(x)          # (B, 32, 28, 28)
+        # Initial conv
+        x = self.init_conv(x)
         
-        d1 = self.down1(x0, t)      # (B, 64, 14, 14)
-        d2 = self.down2(d1, t)      # (B, 128, 7, 7)
+        # Encoder
+        x, skip1 = self.down1(x, t_emb)
+        x, skip2 = self.down2(x, t_emb)
         
-        b = self.bot1(d2, t)        # (B, 256, 3, 3) approx
+        # Bottleneck (need to handle time embedding separately)
+        for block in self.bottleneck:
+            if isinstance(block, ResidualBlock):
+                x = block(x, t_emb)
+            else:
+                x = block(x)
         
-        # Up 1
-        u1 = self.up1(b, t)
-        if u1.shape[2:] != d2.shape[2:]: 
-            u1 = F.interpolate(u1, size=d2.shape[2:])
-        u1 = torch.cat((u1, d2), dim=1) # 128 + 128 = 256 channels
+        # Decoder
+        x = self.up1(x, skip2, t_emb)
+        x = self.up2(x, skip1, t_emb)
         
-        # Up 2
-        u2 = self.up2(u1, t)
-        if u2.shape[2:] != d1.shape[2:]: 
-            u2 = F.interpolate(u2, size=d1.shape[2:])
-        u2 = torch.cat((u2, d1), dim=1) # 64 + 64 = 128 channels
+        # Output
+        x = self.final_conv(x)
         
-        # Final Projection
-        final = self.out(u2)
-        
-        # Ensure output size is exactly 28x28 (handling rounding errors in convolution)
-        if final.shape[2:] != (self.img_size, self.img_size):
-            final = F.interpolate(final, size=(self.img_size, self.img_size))
-        
-        return final
+        return x
