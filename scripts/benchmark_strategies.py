@@ -160,12 +160,15 @@ class StrategyResult:
 # =============================================================================
 
 DEFAULT_STRATEGIES = [
+    # ==========================================================================
+    # Baseline Methods
+    # ==========================================================================
     StrategyConfig(
         name="DDPM_1000",
         type="ddpm",
         params={},
         expected_nfe=1000,
-        description="Standard DDPM with 1000 steps"
+        description="Standard DDPM with 1000 steps (baseline)"
     ),
     StrategyConfig(
         name="DDIM_100",
@@ -195,40 +198,73 @@ DEFAULT_STRATEGIES = [
         expected_nfe=10,
         description="DDIM with 10 deterministic steps (fast)"
     ),
+    
+    # ==========================================================================
+    # StepDrop: Linear Schedule (parabolic skip probability)
+    # p(t) = base_prob * 4 * t * (1-t) - peaks at middle
+    # ==========================================================================
     StrategyConfig(
-        name="StepDrop_0.2",
-        type="stepdrop",
-        params={"skip_strategy": "linear", "base_skip_prob": 0.2},
-        expected_nfe=800,
-        description="StepDrop with 20% skip probability"
-    ),
-    StrategyConfig(
-        name="StepDrop_0.3",
+        name="StepDrop_Linear_0.3",
         type="stepdrop",
         params={"skip_strategy": "linear", "base_skip_prob": 0.3},
         expected_nfe=700,
-        description="StepDrop with 30% skip probability"
+        description="StepDrop Linear schedule, 30% base skip"
     ),
     StrategyConfig(
-        name="StepDrop_0.5",
+        name="StepDrop_Linear_0.5",
         type="stepdrop",
         params={"skip_strategy": "linear", "base_skip_prob": 0.5},
         expected_nfe=500,
-        description="StepDrop with 50% skip probability"
+        description="StepDrop Linear schedule, 50% base skip"
+    ),
+    
+    # ==========================================================================
+    # StepDrop: Cosine² Schedule (smooth transitions)
+    # p(t) = base_prob * sin²(πt) - smoother than linear
+    # ==========================================================================
+    StrategyConfig(
+        name="StepDrop_CosineSq_0.3",
+        type="stepdrop",
+        params={"skip_strategy": "cosine_sq", "base_skip_prob": 0.3},
+        expected_nfe=700,
+        description="StepDrop Cosine² schedule, 30% base skip"
     ),
     StrategyConfig(
-        name="StepDrop_Cosine_0.3",
+        name="StepDrop_CosineSq_0.5",
         type="stepdrop",
-        params={"skip_strategy": "cosine", "base_skip_prob": 0.3},
-        expected_nfe=700,
-        description="StepDrop with cosine schedule, 30% skip"
+        params={"skip_strategy": "cosine_sq", "base_skip_prob": 0.5},
+        expected_nfe=500,
+        description="StepDrop Cosine² schedule, 50% base skip"
     ),
+    
+    # ==========================================================================
+    # StepDrop: Quadratic Schedule (sharper peak in middle)
+    # p(t) = base_prob * 16 * t² * (1-t)² - more aggressive middle skipping
+    # ==========================================================================
+    StrategyConfig(
+        name="StepDrop_Quadratic_0.3",
+        type="stepdrop",
+        params={"skip_strategy": "quadratic", "base_skip_prob": 0.3},
+        expected_nfe=750,
+        description="StepDrop Quadratic schedule, 30% base skip"
+    ),
+    StrategyConfig(
+        name="StepDrop_Quadratic_0.5",
+        type="stepdrop",
+        params={"skip_strategy": "quadratic", "base_skip_prob": 0.5},
+        expected_nfe=550,
+        description="StepDrop Quadratic schedule, 50% base skip"
+    ),
+    
+    # ==========================================================================
+    # StepDrop: Adaptive (error-based dynamic skipping)
+    # ==========================================================================
     StrategyConfig(
         name="StepDrop_Adaptive",
         type="stepdrop_adaptive",
-        params={"base_skip_prob": 0.2, "quality_threshold": -0.1},
-        expected_nfe=750,
-        description="Adaptive StepDrop with quality feedback"
+        params={"base_skip_prob": 0.3},
+        expected_nfe=700,
+        description="Adaptive StepDrop with error-based feedback"
     ),
 ]
 
@@ -262,40 +298,90 @@ def prepare_real_data(
         return str(out_path)
     
     print(f"📥 Preparing real data cache ({num_images} images)...")
-    return str(save_cifar10_real_subset(num_images=num_images, out_dir=out_dir))
+    
+    if dataset == "mnist":
+        # Import MNIST dataset
+        from torchvision import datasets, transforms
+        from torchvision.utils import save_image
+        
+        out_path.mkdir(parents=True, exist_ok=True)
+        
+        transform = transforms.Compose([
+            transforms.Resize(32),  # Resize to 32x32 for consistency
+            transforms.ToTensor(),
+            transforms.Normalize([0.5], [0.5])
+        ])
+        
+        mnist = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+        
+        for i in range(min(num_images, len(mnist))):
+            img, _ = mnist[i]
+            save_image(img, out_path / f"{i:05d}.png", normalize=True, value_range=(-1, 1))
+        
+        print(f"✅ Saved {num_images} MNIST images to {out_dir}")
+        return str(out_path)
+    else:
+        return str(save_cifar10_real_subset(num_images=num_images, out_dir=out_dir))
 
 
 # =============================================================================
 # Model Loading
 # =============================================================================
 
-def load_model(checkpoint_path: Optional[str], device: str, dummy: bool = False) -> nn.Module:
-    """Load model from checkpoint or create dummy."""
+def load_model(checkpoint_path: Optional[str], device: str, dummy: bool = False) -> Tuple[nn.Module, Dict[str, Any]]:
+    """Load model from checkpoint or create dummy. Returns model and config dict."""
+    config = {
+        'img_size': 32,
+        'channels': 3,
+        'base_channels': 64
+    }
+    
     if dummy or checkpoint_path is None:
         print("🎭 Using dummy model for testing")
-        model = TinyUNet(img_size=32, channels=3, base_channels=64)
+        model = TinyUNet(img_size=config['img_size'], channels=config['channels'], base_channels=config['base_channels'])
     else:
         print(f"📦 Loading model from {checkpoint_path}")
         checkpoint = torch.load(checkpoint_path, map_location=device)
         
         if isinstance(checkpoint, dict) and 'config' in checkpoint:
-            config = checkpoint['config']
+            ckpt_config = checkpoint['config']
+            config['img_size'] = ckpt_config.get('img_size', 32)
+            config['channels'] = ckpt_config.get('channels', 3)
+            config['base_channels'] = ckpt_config.get('base_channels', 64)
             model = TinyUNet(
-                img_size=config.get('img_size', 32),
-                channels=config.get('channels', 3),
-                base_channels=config.get('base_channels', 64)
+                img_size=config['img_size'],
+                channels=config['channels'],
+                base_channels=config['base_channels']
             )
             model.load_state_dict(checkpoint['model_state_dict'])
         elif isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-            model = TinyUNet(img_size=32, channels=3, base_channels=64)
-            model.load_state_dict(checkpoint['model_state_dict'])
+            # Try to infer channels from the first conv layer weights
+            state_dict = checkpoint['model_state_dict']
+            if 'init_conv.weight' in state_dict:
+                config['channels'] = state_dict['init_conv.weight'].shape[1]
+            model = TinyUNet(
+                img_size=config['img_size'],
+                channels=config['channels'],
+                base_channels=config['base_channels']
+            )
+            model.load_state_dict(state_dict)
         else:
-            model = TinyUNet(img_size=32, channels=3, base_channels=64)
+            # Assume it's a raw state dict
+            if 'init_conv.weight' in checkpoint:
+                config['channels'] = checkpoint['init_conv.weight'].shape[1]
+            model = TinyUNet(
+                img_size=config['img_size'],
+                channels=config['channels'],
+                base_channels=config['base_channels']
+            )
             model.load_state_dict(checkpoint)
     
     model = model.to(device)
     model.eval()
-    return model
+    
+    print(f"   Model config: img_size={config['img_size']}, channels={config['channels']}, base_channels={config['base_channels']}")
+    
+    return model, config
 
 
 # =============================================================================
@@ -355,9 +441,8 @@ def create_generator(
         else:
             raise ValueError(f"Unknown strategy: {strategy.type}")
         
-        # Normalize to [0, 1]
-        if samples.min() < 0:
-            samples = (samples + 1) / 2
+        # Normalize to [0, 1] for metrics (most metrics expect this range)
+        samples = (samples.clamp(-1, 1) + 1) / 2
         return samples.clamp(0, 1)
     
     return generator
@@ -440,53 +525,79 @@ class ComprehensiveBenchmarkRunner:
         real_images: Optional[torch.Tensor] = None
     ) -> StrategyResult:
         """Run comprehensive evaluation for a single strategy."""
-        print(f"\n{'='*70}")
-        print(f"🚀 Strategy: {strategy.name}")
-        print(f"   {strategy.description}")
-        print(f"{'='*70}")
+        result = StrategyResult(name=strategy.name)
+        result.description = strategy.description
+        result.nfe = strategy.expected_nfe
         
-        result = StrategyResult(name=strategy.name, num_samples=num_samples)
+        print(f"\n{'='*60}")
+        print(f"📊 Evaluating: {strategy.name}")
+        print(f"   {strategy.description}")
+        print(f"   Expected NFE: {strategy.expected_nfe}")
+        print(f"{'='*60}")
         
         try:
-            # Create output directory for this strategy
-            strategy_dir = self.output_dir / strategy.name
-            samples_dir = ensure_dir(str(strategy_dir / "samples"))
-            
             # Create generator
             generator = create_generator(
                 model, strategy, self.image_shape, self.device, self.num_timesteps
             )
             
             # Generate and save images
-            print(f"   📸 Generating {num_samples} samples...")
+            print(f"\n   🎨 Generating {num_samples} samples...")
+            fake_dir = str(self.output_dir / strategy.name / "samples")
             fake_dir, duration, throughput = generate_and_save_fake_images(
-                generator,
-                str(samples_dir),
-                num_samples,
-                batch_size,
-                self.device
+                generator, fake_dir, num_samples, batch_size, self.device
             )
             
             result.duration = duration
             result.throughput = throughput
-            result.nfe = strategy.expected_nfe or -1
+            print(f"      ✅ Generated in {duration:.1f}s ({throughput:.1f} img/s)")
             
-            print(f"   ⏱️  Duration: {duration:.2f}s")
-            print(f"   ⚡ Throughput: {throughput:.2f} img/s")
-            print(f"   📊 NFE: {result.nfe}")
+            # Load images for metrics
+            print(f"\n   📈 Computing Metrics...")
+            fake_images = load_images_from_dir(str(fake_dir), max_images=num_samples, normalize=False)
             
-            # Load generated images for metrics
-            print(f"   📂 Loading generated images...")
-            fake_images = load_images_from_dir(str(fake_dir), max_images=num_samples)
+            # Ensure fake images are in [0, 1] range
+            if fake_images.min() < 0:
+                fake_images = (fake_images + 1) / 2
+            fake_images = fake_images.clamp(0, 1)
             
-            # Load real images if not provided
+            # Load and resize real images to match fake image size
             if real_images is None:
-                real_images = load_images_from_dir(real_data_dir, max_images=num_samples)
+                real_images = load_images_from_dir(real_data_dir, max_images=num_samples, normalize=False)
+            
+            # Ensure real images are in [0, 1] range
+            if real_images.min() < 0:
+                real_images = (real_images + 1) / 2
+            real_images = real_images.clamp(0, 1)
+            
+            # Resize real images to match fake images if needed
+            fake_h, fake_w = fake_images.shape[-2:]
+            real_h, real_w = real_images.shape[-2:]
+            
+            if (fake_h, fake_w) != (real_h, real_w):
+                print(f"      ⚠️ Resizing real images from {real_h}x{real_w} to {fake_h}x{fake_w}")
+                real_images = F.interpolate(
+                    real_images, 
+                    size=(fake_h, fake_w), 
+                    mode='bilinear', 
+                    align_corners=False
+                )
+            
+            # Handle channel mismatch (grayscale vs RGB)
+            if fake_images.shape[1] != real_images.shape[1]:
+                if fake_images.shape[1] == 1 and real_images.shape[1] == 3:
+                    # Convert fake grayscale to RGB
+                    fake_images = fake_images.repeat(1, 3, 1, 1)
+                    print(f"      ⚠️ Converted fake images from grayscale to RGB for metrics")
+                elif fake_images.shape[1] == 3 and real_images.shape[1] == 1:
+                    # Convert real grayscale to RGB
+                    real_images = real_images.repeat(1, 3, 1, 1)
+                    print(f"      ⚠️ Converted real images from grayscale to RGB for metrics")
             
             # ==================== DISTRIBUTION METRICS ====================
             print(f"\n   📊 Computing Distribution Metrics...")
             
-            # FID
+            # FID (uses directories)
             print(f"      Computing FID...")
             try:
                 fid_result = compute_fid(real_data_dir, str(fake_dir), self.device)
@@ -495,33 +606,46 @@ class ComprehensiveBenchmarkRunner:
             except Exception as e:
                 print(f"      ⚠️ FID failed: {e}")
             
-            # KID
+            # KID - adjust subset_size based on number of samples
             if self.compute_full_metrics:
                 print(f"      Computing KID...")
                 try:
-                    kid_result = compute_kid(real_images, fake_images, self.device)
-                    result.kid = kid_result.value
-                    print(f"      ✅ KID: {result.kid:.4f}")
+                    # KID subset_size must be <= number of samples
+                    kid_subset = min(1000, num_samples // 2, len(real_images), len(fake_images))
+                    if kid_subset >= 10:  # Need reasonable subset for KID
+                        kid_result = compute_kid(real_images, fake_images, self.device, subset_size=kid_subset)
+                        result.kid = kid_result.value
+                        print(f"      ✅ KID: {result.kid:.4f}")
+                    else:
+                        print(f"      ⚠️ KID skipped: not enough samples (need at least 10)")
                 except Exception as e:
                     print(f"      ⚠️ KID failed: {e}")
             
             # Inception Score
             print(f"      Computing Inception Score...")
             try:
-                is_result = compute_inception_score(fake_images, self.device)
+                # IS needs RGB images in [0, 1] range
+                fake_for_is = fake_images
+                if fake_for_is.shape[1] == 1:
+                    fake_for_is = fake_for_is.repeat(1, 3, 1, 1)
+                is_result = compute_inception_score(fake_for_is, self.device)
                 result.is_mean = is_result.value
-                result.is_std = is_result.std if is_result.std else 0.0
+                result.is_std = is_result.std
                 print(f"      ✅ IS: {result.is_mean:.2f} ± {result.is_std:.2f}")
             except Exception as e:
                 print(f"      ⚠️ IS failed: {e}")
             
-            # Precision & Recall
+            # Precision/Recall
             if self.compute_full_metrics:
                 print(f"      Computing Precision/Recall...")
                 try:
                     extractor = self._get_feature_extractor()
-                    fake_features = extractor.extract(fake_images)
-                    real_features = self._get_real_features(real_images)
+                    # Ensure RGB for feature extraction
+                    fake_for_feat = fake_images if fake_images.shape[1] == 3 else fake_images.repeat(1, 3, 1, 1)
+                    real_for_feat = real_images if real_images.shape[1] == 3 else real_images.repeat(1, 3, 1, 1)
+                    
+                    fake_features = extractor.extract(fake_for_feat)
+                    real_features = self._get_real_features(real_for_feat)
                     
                     prec_result, rec_result = compute_precision_recall(
                         real_features, fake_features
@@ -539,8 +663,10 @@ class ComprehensiveBenchmarkRunner:
                 try:
                     if 'fake_features' not in locals():
                         extractor = self._get_feature_extractor()
-                        fake_features = extractor.extract(fake_images)
-                        real_features = self._get_real_features(real_images)
+                        fake_for_feat = fake_images if fake_images.shape[1] == 3 else fake_images.repeat(1, 3, 1, 1)
+                        real_for_feat = real_images if real_images.shape[1] == 3 else real_images.repeat(1, 3, 1, 1)
+                        fake_features = extractor.extract(fake_for_feat)
+                        real_features = self._get_real_features(real_for_feat)
                     
                     dens_result, cov_result = compute_density_coverage(
                         real_features, fake_features
@@ -561,9 +687,16 @@ class ComprehensiveBenchmarkRunner:
                 real_subset = real_images[:n_pairs]
                 fake_subset = fake_images[:n_pairs]
                 
-                # LPIPS
+                # Ensure RGB for perceptual metrics
+                if real_subset.shape[1] == 1:
+                    real_subset = real_subset.repeat(1, 3, 1, 1)
+                if fake_subset.shape[1] == 1:
+                    fake_subset = fake_subset.repeat(1, 3, 1, 1)
+                
+                # LPIPS - ensure [0, 1] range
                 print(f"      Computing LPIPS...")
                 try:
+                    # LPIPS in torchmetrics expects [0, 1] range
                     lpips_result = compute_lpips(real_subset, fake_subset, self.device)
                     result.lpips = lpips_result.value
                     print(f"      ✅ LPIPS: {result.lpips:.4f}")
@@ -597,7 +730,8 @@ class ComprehensiveBenchmarkRunner:
                 try:
                     if 'fake_features' not in locals():
                         extractor = self._get_feature_extractor()
-                        fake_features = extractor.extract(fake_images)
+                        fake_for_feat = fake_images if fake_images.shape[1] == 3 else fake_images.repeat(1, 3, 1, 1)
+                        fake_features = extractor.extract(fake_for_feat)
                     
                     vendi_result = compute_vendi_score(fake_features)
                     result.vendi_score = vendi_result.value
@@ -605,10 +739,13 @@ class ComprehensiveBenchmarkRunner:
                 except Exception as e:
                     print(f"      ⚠️ Vendi Score failed: {e}")
                 
-                # Intra-LPIPS
+                # Intra-LPIPS - ensure [0, 1] range and RGB
                 print(f"      Computing Intra-LPIPS...")
                 try:
-                    intra_result = compute_intra_lpips(fake_images, self.device)
+                    fake_for_lpips = fake_images if fake_images.shape[1] == 3 else fake_images.repeat(1, 3, 1, 1)
+                    # Ensure [0, 1] range
+                    fake_for_lpips = fake_for_lpips.clamp(0, 1)
+                    intra_result = compute_intra_lpips(fake_for_lpips, self.device)
                     result.intra_lpips = intra_result.value
                     print(f"      ✅ Intra-LPIPS: {result.intra_lpips:.4f}")
                 except Exception as e:
@@ -627,27 +764,27 @@ class ComprehensiveBenchmarkRunner:
                         self.device
                     )
                     result.flops = flops_result.value
-                    print(f"      ✅ FLOPs: {result.flops/1e9:.2f} GFLOPs")
+                    print(f"      ✅ FLOPs: {result.flops/1e9:.2f}G")
                 except Exception as e:
                     print(f"      ⚠️ FLOPs failed: {e}")
             
             # Memory
-            if self.compute_full_metrics and self.device == "cuda":
-                print(f"      Computing Memory Usage...")
-                try:
-                    mem_result = compute_memory_usage(self.device)
-                    result.memory_gb = mem_result.value
-                    print(f"      ✅ Memory: {result.memory_gb:.2f} GB")
-                except Exception as e:
-                    print(f"      ⚠️ Memory failed: {e}")
+            try:
+                mem_result = compute_memory_usage(self.device)
+                result.memory_gb = mem_result.value
+                print(f"      ✅ GPU Memory: {result.memory_gb:.2f} GB")
+            except Exception as e:
+                print(f"      ⚠️ Memory failed: {e}")
+            
+            result.success = True
             
         except Exception as e:
-            result.error = str(e)
-            print(f"   ❌ Strategy failed: {e}")
+            print(f"❌ Strategy failed: {e}")
             import traceback
             traceback.print_exc()
+            result.success = False
+            result.error = str(e)
         
-        self.results[strategy.name] = result
         return result
     
     def run_all(
@@ -860,15 +997,41 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"🖥️  Device: {device}")
     
-    # Prepare real data
-    num_real = 100 if args.dummy else min(10000, args.samples * 2)
-    real_data_dir = prepare_real_data(
-        out_dir=args.real_data_dir,
-        num_images=num_real
-    )
+    # Load model (now returns config too)
+    model, model_config = load_model(args.checkpoint, device, dummy=args.dummy)
     
-    # Load model
-    model = load_model(args.checkpoint, device, dummy=args.dummy)
+    # Determine image shape from model config
+    image_shape = (model_config['channels'], model_config['img_size'], model_config['img_size'])
+    
+    # Prepare real data based on channels
+    if model_config['channels'] == 1:
+        # MNIST - need to prepare MNIST real data
+        print("📊 Detected grayscale model (likely MNIST)")
+        real_data_dir = args.real_data_dir.replace("cifar10", "mnist") if "cifar10" in args.real_data_dir else args.real_data_dir
+        # For now, skip real data for MNIST or prepare it differently
+        num_real = 100 if args.dummy else min(10000, args.samples * 2)
+        # You may need to implement save_mnist_real_subset similar to save_cifar10_real_subset
+        try:
+            real_data_dir = prepare_real_data(
+                out_dir=real_data_dir,
+                num_images=num_real,
+                dataset="mnist" if model_config['channels'] == 1 else "cifar10"
+            )
+        except Exception as e:
+            print(f"⚠️ Could not prepare real data: {e}")
+            print("   Using CIFAR-10 fallback (metrics may be invalid for MNIST model)")
+            num_real = 100 if args.dummy else min(10000, args.samples * 2)
+            real_data_dir = prepare_real_data(
+                out_dir=args.real_data_dir,
+                num_images=num_real
+            )
+    else:
+        # CIFAR-10 or other RGB
+        num_real = 100 if args.dummy else min(10000, args.samples * 2)
+        real_data_dir = prepare_real_data(
+            out_dir=args.real_data_dir,
+            num_images=num_real
+        )
     
     # Select strategies
     if args.strategies == "all":
@@ -885,11 +1048,12 @@ def main():
         strategies = strategies[:3]
         print(f"🎭 Dummy mode: Using {len(strategies)} strategies, {args.samples} samples")
     
-    # Run benchmark
+    # Run benchmark with correct image shape
     runner = ComprehensiveBenchmarkRunner(
         output_dir=args.output_dir,
         device=device,
-        compute_full_metrics=args.full_metrics
+        compute_full_metrics=args.full_metrics,
+        image_shape=image_shape  # Pass the correct image shape
     )
     
     runner.run_all(
