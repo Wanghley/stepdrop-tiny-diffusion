@@ -248,6 +248,30 @@ def plot_metrics_comparison(df, output_dir):
     print(f"✅ Saved Metrics Comparison to {save_path}")
     plt.close()
 
+    # --- Save Individual Plots ---
+    for metric, label, invert in available:
+        fig_single, ax_single = plt.subplots(figsize=(6, 5))
+        colors = [get_strategy_color(s) for s in df['strategy']]
+        bars = ax_single.bar(range(len(df)), df[metric], color=colors, width=0.7)
+        
+        ax_single.set_title(label, fontsize=12, fontweight='bold')
+        ax_single.set_xticks(range(len(df)))
+        ax_single.set_xticklabels(df['strategy'], rotation=45, ha='right', fontsize=8)
+        
+        # Add values
+        y_min, y_max = ax_single.get_ylim()
+        ax_single.set_ylim(y_min, y_max * 1.15)
+        for bar, val in zip(bars, df[metric]):
+            if val > 0:
+                ax_single.text(bar.get_x() + bar.get_width()/2, bar.get_height() + (y_max * 0.01),
+                        f'{val:.1f}', ha='center', va='bottom', fontsize=6)
+        
+        plt.tight_layout()
+        single_path = output_dir / f"plot_metric_{metric}.png"
+        plt.savefig(single_path, dpi=150, bbox_inches='tight')
+        print(f"✅ Saved Individual Metric Plot to {single_path}")
+        plt.close()
+
 
 def plot_nfe_vs_quality(df, output_dir):
     """NFE vs FID scatter plot."""
