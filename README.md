@@ -94,18 +94,18 @@ You will need Python 3.8+ and pip installed on your system.
    pip install -r requirements.txt
    ```
 
-  ### Try It
+### Try It
 
-  Jump straight into the pipeline and benchmarks:
+Jump straight into the pipeline and benchmarks:
 
-  ```bash
-  # Pipeline (train → sample → evaluate)
-  chmod +x scripts/pipeline.sh
-  ./scripts/pipeline.sh --all --dataset cifar10 --epochs 10 --eval-samples 1000
+```bash
+# Pipeline (train → sample → evaluate)
+chmod +x scripts/pipeline.sh
+./scripts/pipeline.sh --all --dataset cifar10 --epochs 10 --eval-samples 1000
 
-  # Benchmark (FID/IS/throughput)
-  python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --samples 1000
-  ```
+# Benchmark (FID/IS/throughput)
+python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --samples 1000
+```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -153,22 +153,26 @@ python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --sampl
 The main automation entrypoint is `scripts/pipeline.sh`. It supports training, sampling, and comprehensive evaluation.
 
 - Show help
+
 ```bash
 chmod +x scripts/pipeline.sh
 ./scripts/pipeline.sh --help
 ```
 
 - Full pipeline (train → sample → evaluate)
+
 ```bash
 ./scripts/pipeline.sh --all --dataset cifar10 --epochs 50 --eval-samples 1000
 ```
 
 - Train only
+
 ```bash
 ./scripts/pipeline.sh --train --dataset mnist --epochs 20
 ```
 
 - Sample only
+
 ```bash
 # DDPM
 ./scripts/pipeline.sh --sample --checkpoint checkpoints/model.pt --method ddpm --n-samples 64
@@ -207,26 +211,76 @@ Results are saved under `results/<timestamp>/` with `report.json`, `report.csv`,
 
 ## StepDrop Skip Strategies
 
-StepDrop introduces stochastic step skipping with configurable schedules:
+StepDrop supports multiple ways to determine _which_ steps to skip:
 
-- Linear: parabolic peak at middle (`4t(1-t)`)
-- Cosine²: smooth `sin²(πt)` curve
-- Quadratic: sharper middle peak (`16t²(1-t)²`)
-- Constant: fixed probability throughout
-- Early/Late Skip: bias skipping to early (high noise) or late (low noise) steps
-- Critical Preserve: low skipping in the critical middle region
+### 1. Probability Schedules (`StepDropSampler`)
 
-Examples:
+Defined by a probability curve $P_{skip}(t)$:
+
+- **Linear**: Parabolic peak at middle (`4t(1-t)`). Good balance.
+- **Cosine²**: Smooth `sin²(πt)` curve. Gentle transitions.
+- **Quadratic**: Sharper middle peak (`16t²(1-t)²`). Aggressive middle skipping.
+- **Early/Late Skip**: Bias skipping to high-noise (early) or low-noise (late) regions.
+- **Critical Preserve**: Protects the critical [0.3, 0.7] interval.
+- **Aggressive Middle**: Heavily skips the safe middle region (up to 95%).
+
+### 2. Adaptive Error-Based (`AdaptiveStepDropSampler`)
+
+Dynamically adjusts skipping based on reconstruction stability:
+
+- **Low Error**: Skips more aggressively.
+- **High Error**: Forces denoising steps.
+- **Param**: `--skip-strategy adaptive`
+
+### 3. Target NFE (`TargetNFEStepDropSampler`)
+
+Directly targets a specific budget (e.g., 50 steps) instead of a probability:
+
+- **Uniform**: Evenly spaced steps (like DDIM).
+- **Importance**: Allocates more steps to start/end, fewer to middle.
+- **Stochastic**: Random selection with boundary protection.
+
+---
+
+## Visualization & Poster Utilities
+
+We provide specialized scripts to generate figures for papers and posters:
+
+### 1. Comparison Grid
+
+Generate a side-by-side comparison (DDPM vs DDIM vs StepDrop) using the **same random seed**:
+
 ```bash
-./scripts/pipeline.sh --sample --method stepdrop --skip-strategy linear --skip-prob 0.3
-./scripts/pipeline.sh --sample --method stepdrop --skip-strategy cosine_sq --skip-prob 0.3
-./scripts/pipeline.sh --sample --method stepdrop --skip-strategy quadratic --skip-prob 0.5
+python scripts/generate_grid.py
 ```
 
-To compare schedules:
+_Output_: `results/comparison_grid.png`
+
+### 2. Schedule Visualization
+
+Visualize the probability curves and effective schedules:
+
 ```bash
-./scripts/pipeline.sh --evaluate --compare-stepdrop --eval-samples 1000
+python scripts/plot_schedules.py --save_path results/schedules.png
 ```
+
+### 3. Benchmark Plots
+
+Generate Pareto frontiers (FID vs Throughput) and radar charts from a report:
+
+```bash
+python scripts/plot_results.py --results results/2025-12-07_12-00-00/
+```
+
+### 4. Denoising Evolution ("Film Strip")
+
+Compare how DDIM vs StepDrop evolve images over time (t=1000 -> t=0):
+
+```bash
+python scripts/plot_denoising_evolution.py
+```
+
+_Output_: `results/plot_denoising_evolution.png`
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -238,12 +292,15 @@ For module-level details, sampler APIs, and CLI options, see the developer-focus
 
 Quick pointers:
 
-- Try the pipeline: 
+- Try the pipeline:
+
 ```bash
 chmod +x scripts/pipeline.sh
 ./scripts/pipeline.sh --all --dataset cifar10 --epochs 10 --eval-samples 1000
 ```
+
 - Run the benchmark directly:
+
 ```bash
 python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --samples 1000
 ```
