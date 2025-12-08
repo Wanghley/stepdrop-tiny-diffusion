@@ -17,7 +17,7 @@ runs/
 outputs/
 results/**/*.png
 #Reenable this if you want to commit the plots
-#!results/**/plot_*.png
+!results/**/plot_*.png
 results/**/*.pt
 samples/
 
