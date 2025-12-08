@@ -24,8 +24,9 @@ module load python/3.9
 source venv/bin/activate
 
 # Run DDPM sampling
-python ddpm_sampler.py \
-    --num_samples 16 \
-    --num_timesteps 1000 \
-    --channels 3 \
-    --output_dir results/ddpm
+python src/sample.py \
+    --checkpoint checkpoints/model.pt \
+    --method ddpm \
+    --n_samples 16 \
+    --output_dir results/ddpm \
+    --device cuda
