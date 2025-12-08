@@ -200,6 +200,30 @@ def plot_metrics_radar(df, output_dir):
     plt.close()
 
 
+    plt.close()
+
+def abbreviate_strategy(name):
+    """Compact acronyms for plot labels."""
+    # StepDrop Targets
+    if "StepDrop_Target" in name:
+        # e.g. StepDrop_Target50_Importance -> SD_T50_I
+        parts = name.split('_')
+        nfe = parts[1].replace('Target', 'T')
+        strategy = parts[2][0] # First letter (I, U, S)
+        return f"SD_{nfe}_{strategy}"
+    
+    # StepDrop Standard
+    if "StepDrop" in name and "Target" not in name:
+        # e.g. StepDrop_Linear_0.3 -> SD_Lin_0.3
+        name = name.replace("StepDrop", "SD")
+        name = name.replace("Linear", "Lin")
+        name = name.replace("CosineSq", "Cos")
+        name = name.replace("Quadratic", "Quad")
+        name = name.replace("Adaptive", "Adapt")
+        return name
+        
+    return name
+
 def plot_metrics_comparison(df, output_dir):
     """Bar chart comparing all metrics across strategies."""
     metrics_config = [
@@ -218,6 +242,9 @@ def plot_metrics_comparison(df, output_dir):
         print("⚠️ No metrics available for comparison plot")
         return
     
+    # Create abbreviated labels
+    short_labels = [abbreviate_strategy(s) for s in df['strategy']]
+    
     fig, axes = plt.subplots(1, len(available), figsize=(4*len(available), 5))
     if len(available) == 1:
         axes = [axes]
@@ -228,7 +255,7 @@ def plot_metrics_comparison(df, output_dir):
         
         ax.set_title(label, fontsize=12, fontweight='bold')
         ax.set_xticks(range(len(df)))
-        ax.set_xticklabels(df['strategy'], rotation=45, ha='right', fontsize=8)
+        ax.set_xticklabels(short_labels, rotation=45, ha='right', fontsize=9, fontweight='bold')
         # ax.grid(axis='y', linestyle='--', alpha=0.5)
         
         # Add value labels
@@ -256,7 +283,7 @@ def plot_metrics_comparison(df, output_dir):
         
         ax_single.set_title(label, fontsize=12, fontweight='bold')
         ax_single.set_xticks(range(len(df)))
-        ax_single.set_xticklabels(df['strategy'], rotation=45, ha='right', fontsize=8)
+        ax_single.set_xticklabels(short_labels, rotation=45, ha='right', fontsize=9, fontweight='bold')
         
         # Add values
         y_min, y_max = ax_single.get_ylim()
