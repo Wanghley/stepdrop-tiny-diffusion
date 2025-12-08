@@ -22,6 +22,7 @@ results/**/*.pt
 # IDE/editor
 .vscode/
 .idea/
+LocalUtils/
 
 # LaTeX build files
 *.aux
