@@ -40,7 +40,7 @@ def get_strategy_color(name):
 
 def set_style():
     """Set consistent plot style."""
-    plt.style.use('seaborn-v0_8-whitegrid')
+    plt.style.use('seaborn-v0_8-white')
     plt.rcParams.update({
         'font.family': 'sans-serif',
         'font.size': 10,
@@ -53,6 +53,8 @@ def set_style():
         'axes.spines.top': False,
         'axes.spines.right': False,
     })
+
+
 
 
 def load_latest_report(results_dir):
@@ -127,7 +129,7 @@ def plot_pareto(df, output_dir):
     ax.set_xlabel('Throughput (images/sec) [Higher is Better ↑]', fontsize=11, fontweight='bold')
     ax.set_ylabel('FID Score [Lower is Better ↓]', fontsize=11, fontweight='bold')
     ax.legend(loc='upper right')
-    ax.grid(True, linestyle='--', alpha=0.5)
+    # ax.grid(True, linestyle='--', alpha=0.5)
     
     # Add quadrant labels
     ax.axhline(y=df['fid'].median(), color='gray', linestyle=':', alpha=0.5)
@@ -227,7 +229,7 @@ def plot_metrics_comparison(df, output_dir):
         ax.set_title(label, fontsize=12, fontweight='bold')
         ax.set_xticks(range(len(df)))
         ax.set_xticklabels(df['strategy'], rotation=45, ha='right', fontsize=8)
-        ax.grid(axis='y', linestyle='--', alpha=0.5)
+        # ax.grid(axis='y', linestyle='--', alpha=0.5)
         
         # Add value labels
         # Increase Y limit to make room for labels
@@ -268,7 +270,7 @@ def plot_nfe_vs_quality(df, output_dir):
     ax.set_title('Compute Cost vs Quality', fontsize=14, fontweight='bold', color=DUKE_BLUE)
     ax.set_xlabel('NFE (Function Evaluations) [Lower is Better ↓]', fontsize=11, fontweight='bold')
     ax.set_ylabel('FID Score [Lower is Better ↓]', fontsize=11, fontweight='bold')
-    ax.grid(True, linestyle='--', alpha=0.5)
+    # ax.grid(True, linestyle='--', alpha=0.5)
     
     plt.tight_layout()
     save_path = output_dir / "plot_nfe_vs_quality.png"
