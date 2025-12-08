@@ -17,6 +17,7 @@ runs/
 outputs/
 results/**/*.png
 results/**/*.pt
+samples/
 
 # IDE/editor
 .vscode/
