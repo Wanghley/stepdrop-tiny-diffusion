@@ -16,12 +16,14 @@ logs/
 runs/
 outputs/
 results/**/*.png
+!results/**/plot_*.png
 results/**/*.pt
 samples/
 
 # IDE/editor
 .vscode/
 .idea/
+LocalUtils/
 
 # LaTeX build files
 *.aux
@@ -46,3 +48,4 @@ samples/
 
 # MacOS
 .DS_Store
+cifar10_64ch_50ep.pt

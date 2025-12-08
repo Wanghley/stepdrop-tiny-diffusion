@@ -139,7 +139,11 @@ python scripts/benchmark_strategies.py --dummy --samples 10
 python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --samples 5000
 ```
 
-- **Result**: Generates a `results/YYYY-MM-DD.../` folder with a `report.json` and sample images.
+- **Result**: Generates a `results/YYYY-MM-DD.../` folder with:
+  - `report.json`: Full metrics
+  - `report.csv`: Summary for Excel/Sheets
+  - `*.png`: **Automatically generated plots** (Pareto frontier, Radar charts, etc.)
+  - `samples/`: Sample images
 - **Help**: Run `python scripts/benchmark_strategies.py --help` for full options.
 
 <p align="right"\>(<a href="#readme-top"\>back to top\<a\>)\<p\>

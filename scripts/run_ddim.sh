@@ -26,11 +26,12 @@ source venv/bin/activate
 # Run DDIM sampling with different step counts
 for steps in 10 25 50 100; do
     echo "Running DDIM with $steps steps..."
-    python ddim_sampler.py \
-        --num_samples 16 \
-        --num_timesteps 1000 \
-        --num_inference_steps $steps \
-        --eta 0.0 \
-        --channels 3 \
-        --output_dir results/ddim
+    python src/sample.py \
+        --checkpoint checkpoints/model.pt \
+        --method ddim \
+        --n_samples 16 \
+        --ddim_steps $steps \
+        --ddim_eta 0.0 \
+        --output_dir results/ddim \
+        --device cuda
 done
