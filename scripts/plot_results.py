@@ -56,9 +56,11 @@ def set_style():
 
 
 def load_latest_report(results_dir):
-    """Load the most recent report.json."""
+    """Load the most recent report.json from results_dir."""
     results_path = Path(results_dir)
-    
+    if not results_path.exists():
+        raise FileNotFoundError(f"Results directory not found: {results_dir}")
+        
     # Find latest timestamped directory
     dirs = sorted([d for d in results_path.iterdir() if d.is_dir()], reverse=True)
     
@@ -71,6 +73,18 @@ def load_latest_report(results_dir):
             return data, d
     
     raise FileNotFoundError(f"No report.json found in {results_dir}")
+
+
+def load_report_from_path(report_dir):
+    """Load report.json from a specific directory."""
+    report_path = Path(report_dir) / "report.json"
+    if not report_path.exists():
+         raise FileNotFoundError(f"No report.json found in {report_dir}")
+    
+    with open(report_path) as f:
+        data = json.load(f)
+    print(f"📂 Loaded: {report_path}")
+    return data, Path(report_dir)
 
 
 def plot_pareto(df, output_dir):
@@ -320,20 +334,17 @@ def plot_comprehensive_summary(df, output_dir):
     plt.close()
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Generate Benchmark Plots")
-    parser.add_argument("--results", type=str, default="results",
-                        help="Results directory")
-    args = parser.parse_args()
-    
+
+def generate_plots(report_path):
+    """Generate all plots for a given report path."""
     set_style()
     
     try:
-        data, output_dir = load_latest_report(args.results)
+        data, output_dir = load_report_from_path(report_path)
     except FileNotFoundError as e:
         print(f"❌ {e}")
         return
-    
+
     # Extract strategies data - handle different JSON structures
     if 'strategies' in data:
         strategies_data = data['strategies']
@@ -344,7 +355,6 @@ def main():
     
     if not strategies_data:
         print("❌ No valid strategy data found in report")
-        print(f"   Available keys: {list(data.keys())}")
         return
     
     # Build DataFrame
@@ -386,6 +396,22 @@ def main():
     
     print(f"\n🎉 All plots saved to: {output_dir}")
 
+def main():
+    parser = argparse.ArgumentParser(description="Generate Benchmark Plots")
+    parser.add_argument("--results", type=str, default="results",
+                        help="Results directory")
+    args = parser.parse_args()
+    
+    set_style()
+    
+    try:
+        data, output_dir = load_latest_report(args.results)
+    except FileNotFoundError as e:
+        print(f"❌ {e}")
+        return
+    
+    generate_plots(output_dir)
 
 if __name__ == "__main__":
     main()
+

@@ -829,48 +829,48 @@ class ComprehensiveBenchmarkRunner:
             # Store result with strategy name as key
             self.results[strategy.name] = result
         
-        self.save_report()
-        self.print_summary()
-    
-    def save_report(self):
-        """Save comprehensive results to JSON."""
-        report = {
+        # Save comprehensive report
+        report_path = self.output_dir / "report.json"
+        
+        report_data = {
             "timestamp": datetime.now().isoformat(),
-            "device": self.device,
-            "num_timesteps": self.num_timesteps,
-            "image_shape": self.image_shape,
-            "full_metrics": self.compute_full_metrics,
-            "strategies": {name: result.to_dict() for name, result in self.results.items()}
+            "config": {
+                "num_timesteps": self.num_timesteps,
+                "image_shape": self.image_shape,
+                "full_metrics": self.compute_full_metrics
+            },
+            "strategies": {name: r.to_dict() for name, r in self.results.items()}
         }
         
-        report_path = self.output_dir / "report.json"
         with open(report_path, "w") as f:
-            json.dump(report, f, indent=2)
+            json.dump(report_data, f, indent=2)
+            
+        print(f"\n✅ Report saved to {report_path}")
         
-        print(f"\n💾 Report saved to {report_path}")
-        
-        # Also save CSV for easy analysis
-        self._save_csv()
-    
-    def _save_csv(self):
-        """Save results as CSV for easy analysis."""
-        import csv
-        
+        # Save CSV summary
         csv_path = self.output_dir / "report.csv"
         
-        if not self.results:
-            return
+        if self.results:
+            # Get fieldnames from first result
+            fieldnames = list(next(iter(self.results.values())).to_dict().keys())
+            
+            import csv
+            with open(csv_path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                for result in self.results.values():
+                    writer.writerow(result.to_dict())
+            print(f"📊 CSV saved to {csv_path}")
         
-        # Get all keys from first result
-        fieldnames = list(next(iter(self.results.values())).to_dict().keys())
-        
-        with open(csv_path, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            for result in self.results.values():
-                writer.writerow(result.to_dict())
-        
-        print(f"📊 CSV saved to {csv_path}")
+        # Generate plots
+        print("\n🎨 Generating plots...")
+        try:
+            from scripts.plot_results import generate_plots
+            generate_plots(self.output_dir)
+        except Exception as e:
+            print(f"⚠️ Failed to generate plots: {e}")
+            import traceback
+            traceback.print_exc()
     
     def print_summary(self):
         """Print comprehensive summary table."""

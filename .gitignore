@@ -16,6 +16,7 @@ logs/
 runs/
 outputs/
 results/**/*.png
+!results/**/plot_*.png
 results/**/*.pt
 
 # IDE/editor
