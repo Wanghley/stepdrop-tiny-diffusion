@@ -230,10 +230,14 @@ def plot_metrics_comparison(df, output_dir):
         ax.grid(axis='y', linestyle='--', alpha=0.5)
         
         # Add value labels
+        # Increase Y limit to make room for labels
+        y_min, y_max = ax.get_ylim()
+        ax.set_ylim(y_min, y_max * 1.15)
+        
         for bar, val in zip(bars, df[metric]):
             if val > 0:
-                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
-                        f'{val:.2f}', ha='center', va='bottom', fontsize=8)
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + (y_max * 0.01),
+                        f'{val:.1f}', ha='center', va='bottom', fontsize=6)
     
     plt.suptitle('Metrics Comparison', fontsize=14, fontweight='bold', color=DUKE_BLUE)
     plt.tight_layout()
