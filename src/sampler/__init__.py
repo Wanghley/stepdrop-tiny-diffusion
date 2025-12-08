@@ -8,6 +8,7 @@ This module provides various sampling strategies for diffusion models:
 - DDIMSampler: Accelerated DDIM sampling (configurable steps)
 - StepDropSampler: Stochastic step skipping for faster sampling
 - AdaptiveStepDropSampler: Adaptive step skipping based on error estimation
+- TargetNFEStepDropSampler: StepDrop with target NFE count
 
 Usage:
     from src.sampler import DDPMSampler, DDIMSampler, StepDropSampler
@@ -27,11 +28,16 @@ Usage:
 
 from .DDPM import DDPMSampler
 from .DDIM import DDIMSampler
-from .stepdrop import StepDropSampler, AdaptiveStepDropSampler
+from .stepdrop import (
+    StepDropSampler, 
+    AdaptiveStepDropSampler,
+    TargetNFEStepDropSampler,
+)
 
 __all__ = [
     "DDPMSampler",
     "DDIMSampler", 
     "StepDropSampler",
     "AdaptiveStepDropSampler",
+    "TargetNFEStepDropSampler",
 ]

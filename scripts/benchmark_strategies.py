@@ -47,7 +47,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # Import from project
 from src.modules import TinyUNet
 from src.scheduler import NoiseScheduler
-from src.sampler import DDPMSampler, DDIMSampler, StepDropSampler, AdaptiveStepDropSampler
+from src.sampler import DDPMSampler, DDIMSampler, StepDropSampler, AdaptiveStepDropSampler, TargetNFEStepDropSampler
 from src.eval.metrics_utils import (
     DiffusionEvaluator,
     EvaluationReport,
@@ -266,6 +266,38 @@ DEFAULT_STRATEGIES = [
         expected_nfe=700,
         description="Adaptive StepDrop with error-based feedback"
     ),
+    
+    # ==========================================================================
+    # TargetNFE StepDrop: Compete directly with DDIM at same NFE
+    # ==========================================================================
+    StrategyConfig(
+        name="StepDrop_Target50_Uniform",
+        type="stepdrop_target",
+        params={"target_nfe": 50, "selection_strategy": "uniform"},
+        expected_nfe=50,
+        description="StepDrop targeting 50 NFE with uniform selection"
+    ),
+    StrategyConfig(
+        name="StepDrop_Target50_Importance",
+        type="stepdrop_target",
+        params={"target_nfe": 50, "selection_strategy": "importance"},
+        expected_nfe=50,
+        description="StepDrop targeting 50 NFE with importance-weighted selection"
+    ),
+    StrategyConfig(
+        name="StepDrop_Target50_Stochastic",
+        type="stepdrop_target",
+        params={"target_nfe": 50, "selection_strategy": "stochastic"},
+        expected_nfe=50,
+        description="StepDrop targeting 50 NFE with stochastic selection"
+    ),
+    StrategyConfig(
+        name="StepDrop_Target25_Importance",
+        type="stepdrop_target",
+        params={"target_nfe": 25, "selection_strategy": "importance"},
+        expected_nfe=25,
+        description="StepDrop targeting 25 NFE with importance-weighted selection"
+    ),
 ]
 
 
@@ -402,6 +434,8 @@ def create_sampler(strategy: StrategyConfig, num_timesteps: int = 1000):
         return StepDropSampler(num_timesteps=num_timesteps)
     elif strategy.type == "stepdrop_adaptive":
         return AdaptiveStepDropSampler(num_timesteps=num_timesteps)
+    elif strategy.type == "stepdrop_target":
+        return TargetNFEStepDropSampler(num_timesteps=num_timesteps)
     else:
         raise ValueError(f"Unknown strategy type: {strategy.type}")
 
@@ -435,6 +469,15 @@ def create_generator(
             samples, _ = sampler.sample(
                 model, shape, device=device,
                 base_skip_prob=strategy.params.get("base_skip_prob", 0.2),
+                return_stats=True,
+                show_progress=False
+            )
+        elif strategy.type == "stepdrop_target":
+            samples, _ = sampler.sample(
+                model, shape, device=device,
+                target_nfe=strategy.params.get("target_nfe", 50),
+                selection_strategy=strategy.params.get("selection_strategy", "uniform"),
+                eta=strategy.params.get("eta", 0.0),
                 return_stats=True,
                 show_progress=False
             )
