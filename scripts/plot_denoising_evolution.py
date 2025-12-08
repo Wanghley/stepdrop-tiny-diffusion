@@ -58,6 +58,10 @@ def sample_with_intermediates(
         # Ensure endpoints
         if 0 not in active_timesteps: active_timesteps.append(0)
         active_timesteps = sorted(set(active_timesteps), reverse=True)
+        print(f"DEBUG StepDrop Timesteps ({len(active_timesteps)}): {active_timesteps}")
+        print(f"DEBUG Alphas[999]: {sampler.alphas_cumprod[999]:.4f}")
+        print(f"DEBUG Alphas[750]: {sampler.alphas_cumprod[750]:.4f}")
+        print(f"DEBUG Alphas[0]: {sampler.alphas_cumprod[0]:.4f}")
         
     # --- Shared Loop Logic (DDIM-style update) ---
     # We need alphas from the sampler
@@ -81,7 +85,7 @@ def sample_with_intermediates(
         alpha_cumprod_t = alphas_cumprod[t].to(device)
         
         # Predict x_0
-        pred_x0 = (x - torch.sqrt(1 - alpha_cumprod_t) * predicted_noise) / torch.sqrt(alpha_cumprod_t)
+        pred_x0 = (x - torch.sqrt(1 - alpha_cumprod_t) * predicted_noise) / (torch.sqrt(alpha_cumprod_t) + 1e-8)
         # pred_x0 = torch.clamp(pred_x0, -1, 1) # Standard DDIM doesn't always clip intermediate x0, but usually good
         
         # Get next timestep
@@ -95,6 +99,7 @@ def sample_with_intermediates(
         # DDIM update
         pred_dir = torch.sqrt(1 - alpha_cumprod_t_prev) * predicted_noise
         x = torch.sqrt(alpha_cumprod_t_prev) * pred_x0 + pred_dir
+
         
     # Always save final
     if 0 in target_timesteps:
