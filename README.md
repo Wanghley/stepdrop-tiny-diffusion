@@ -30,6 +30,10 @@
     <li><a href="#built-with">Built With</a></li>
     <li><a href="#getting-started">Getting Started</a></li>
     <li><a href="#usage">Usage</a></li>
+    <li><a href="#pipeline-script">Pipeline Script</a></li>
+    <li><a href="#evaluation--benchmarking">Evaluation & Benchmarking</a></li>
+    <li><a href="#stepdrop-skip-strategies">StepDrop Skip Strategies</a></li>
+    <li><a href="#developer-guide">Developer Guide</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
     <li><a href="#contributing">Contributing</a></li>
     <li><a href="#license">License</a></li>
@@ -58,6 +62,8 @@ This repository contains the official implementation, experiments, and demo note
 ## Getting Started
 
 To get a local copy up and running, follow these simple steps.
+
+> Developer Guide: For module APIs and sampler details, see `src/README.md`.
 
 ### Prerequisites
 
@@ -88,7 +94,20 @@ You will need Python 3.8+ and pip installed on your system.
    pip install -r requirements.txt
    ```
 
-<p align="right">(<a href="#readme-top">back to top<a>)<p\>
+  ### Try It
+
+  Jump straight into the pipeline and benchmarks:
+
+  ```bash
+  # Pipeline (train → sample → evaluate)
+  chmod +x scripts/pipeline.sh
+  ./scripts/pipeline.sh --all --dataset cifar10 --epochs 10 --eval-samples 1000
+
+  # Benchmark (FID/IS/throughput)
+  python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --samples 1000
+  ```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -105,19 +124,6 @@ When running `scripts/benchmark_strategies.py`, you will generate a `report.json
 | **Avg Steps**  | Average Steps Taken        | **📉 Lower is better**  | The average number of U-Net evaluations per image. <br>• **DDPM**: Always 1000 <br>• **DDIM**: Fixed (e.g., 50) <br>• **StepDrop**: Variable (e.g., ~700)              |
 
 ## Usage
-
-### Jupyter Notebooks
-
-The primary usage and examples are demonstrated in the included Jupyter Notebooks.
-
-- **`StepDrop_in_Stable_Diffusion_1.5.ipynb`**: Demonstrates how to apply StepDrop to the Stable Diffusion 1.5 model.
-- **`StepDrop_in_Tiny_Diffusion.ipynb`**: Shows the core StepDrop implementation with a smaller, tiny diffusion model.
-
-Open and run these notebooks in a Jupyter environment to see how StepDrop is implemented and test its performance.
-
-```bash
-jupyter notebook
-```
 
 ### Command Line Interface (CLI)
 
@@ -138,6 +144,108 @@ python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --sampl
 
 <p align="right"\>(<a href="#readme-top"\>back to top\<a\>)\<p\>
 
+## Pipeline Script
+
+The main automation entrypoint is `scripts/pipeline.sh`. It supports training, sampling, and comprehensive evaluation.
+
+- Show help
+```bash
+chmod +x scripts/pipeline.sh
+./scripts/pipeline.sh --help
+```
+
+- Full pipeline (train → sample → evaluate)
+```bash
+./scripts/pipeline.sh --all --dataset cifar10 --epochs 50 --eval-samples 1000
+```
+
+- Train only
+```bash
+./scripts/pipeline.sh --train --dataset mnist --epochs 20
+```
+
+- Sample only
+```bash
+# DDPM
+./scripts/pipeline.sh --sample --checkpoint checkpoints/model.pt --method ddpm --n-samples 64
+# DDIM (fast)
+./scripts/pipeline.sh --sample --checkpoint checkpoints/model.pt --method ddim --ddim-steps 50 --n-samples 64
+# StepDrop
+./scripts/pipeline.sh --sample --checkpoint checkpoints/model.pt --method stepdrop \
+  --skip-prob 0.3 --skip-strategy linear --n-samples 64
+```
+
+## Evaluation & Benchmarking
+
+Run comprehensive benchmarks (FID, IS, throughput by default; add full metrics for KID, Precision/Recall, LPIPS, SSIM, PSNR, Vendi, etc.).
+
+```bash
+# Basic benchmark
+./scripts/pipeline.sh --evaluate --checkpoint checkpoints/model.pt --eval-samples 1000
+
+# Full metrics
+./scripts/pipeline.sh --evaluate --checkpoint checkpoints/model.pt --eval-samples 5000 --full-metrics
+
+# Compare all StepDrop strategies against DDIM baselines
+./scripts/pipeline.sh --evaluate --checkpoint checkpoints/model.pt --compare-stepdrop --eval-samples 1000
+
+# Evaluate only StepDrop variants
+./scripts/pipeline.sh --evaluate --checkpoint checkpoints/model.pt --stepdrop-only --eval-samples 1000
+
+# Specific strategies only
+./scripts/pipeline.sh --evaluate --checkpoint checkpoints/model.pt \
+  --strategies "DDIM_50,StepDrop_Linear_0.3,StepDrop_Quadratic_0.3" --eval-samples 1000
+```
+
+Results are saved under `results/<timestamp>/` with `report.json`, `report.csv`, and per-strategy sample images.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## StepDrop Skip Strategies
+
+StepDrop introduces stochastic step skipping with configurable schedules:
+
+- Linear: parabolic peak at middle (`4t(1-t)`)
+- Cosine²: smooth `sin²(πt)` curve
+- Quadratic: sharper middle peak (`16t²(1-t)²`)
+- Constant: fixed probability throughout
+- Early/Late Skip: bias skipping to early (high noise) or late (low noise) steps
+- Critical Preserve: low skipping in the critical middle region
+
+Examples:
+```bash
+./scripts/pipeline.sh --sample --method stepdrop --skip-strategy linear --skip-prob 0.3
+./scripts/pipeline.sh --sample --method stepdrop --skip-strategy cosine_sq --skip-prob 0.3
+./scripts/pipeline.sh --sample --method stepdrop --skip-strategy quadratic --skip-prob 0.5
+```
+
+To compare schedules:
+```bash
+./scripts/pipeline.sh --evaluate --compare-stepdrop --eval-samples 1000
+```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Developer Guide
+
+For module-level details, sampler APIs, and CLI options, see the developer-focused docs:
+
+- `src/README.md`: Core modules, `src/sampler/` (DDPM, DDIM, StepDrop, Adaptive), evaluation utilities, and examples.
+
+Quick pointers:
+
+- Try the pipeline: 
+```bash
+chmod +x scripts/pipeline.sh
+./scripts/pipeline.sh --all --dataset cifar10 --epochs 10 --eval-samples 1000
+```
+- Run the benchmark directly:
+```bash
+python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --samples 1000
+```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ## Roadmap
 
 - [x] Core StepDrop sampler implementation
@@ -149,7 +257,7 @@ python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --sampl
 
 See the [open issues](https://www.google.com/search?q=https://github.com/wanghley/stepdrop-tiny-diffusion/issues) for a full list of proposed features and known issues.
 
-<p align="right"\>(<a href="#readme-top"\>back to top<a\>)\<p\>
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Contributing
 
@@ -161,13 +269,13 @@ Contributions are welcome\! If you have suggestions, improvements, or bug fixes,
 4.  Push to the Branch (`git push origin feature/AmazingFeature`)
 5.  Open a Pull Request
 
-<p align="right">(<a href="#readme-top">back to top<a\>)<p\>
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## License
 
 Distributed under the MIT License. See `LICENSE` for more information.
 
-<p align="right"\>(<a href="#readme-top"\>back to top<a\>)\<p\>
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Contact
 
@@ -175,7 +283,7 @@ Wanghley Soares Martins - [@wanghley](https://instagram.com/wanghley) - me@wangh
 
 Project Link: [https://github.com/wanghley/stepdrop-tiny-diffusion](https://github.com/wanghley/stepdrop-tiny-diffusion)
 
-<p align="right">(<a href="#readme-top">back to top\<a\>)\<p\>
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Acknowledgments
 

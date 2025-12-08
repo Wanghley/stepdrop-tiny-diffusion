@@ -70,6 +70,89 @@ This directory contains the modular, CLI-friendly implementation of the **Tiny D
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
+<a name="readme-top"></a>
+
+<div align="center">
+  <h1>📦 Source Code</h1>
+  <p>
+    Core implementation of the Tiny Diffusion model and StepDrop sampling components
+  </p>
+  <p>
+    <a href="#quick-start"><strong>Quick Start »</strong></a>
+    ·
+    <a href="#training">Training</a>
+    ·
+    <a href="#sampling">Sampling</a>
+    ·
+    <a href="#stepdrop-samplers">StepDrop Samplers</a>
+  </p>
+</div>
+
+---
+
+<details>
+  <summary>📑 Table of Contents</summary>
+  <ol>
+    <li><a href="#about">About</a></li>
+    <li><a href="#file-structure">File Structure</a></li>
+    <li><a href="#quick-start">Quick Start</a></li>
+    <li><a href="#training">Training</a></li>
+    <li><a href="#sampling">Sampling</a></li>
+    <li><a href="#stepdrop-samplers">StepDrop Samplers</a></li>
+    <li><a href="#custom-datasets">Custom Datasets</a></li>
+    <li><a href="#configuration">Configuration</a></li>
+    <li><a href="#cli-reference">CLI Reference</a></li>
+    <li><a href="#examples">Examples</a></li>
+  </ol>
+</details>
+
+---
+
+## About
+
+This directory contains the modular, CLI-friendly implementation of the **Tiny Diffusion** model with support for:
+
+- 🎯 Multiple datasets: MNIST, CIFAR-10, and custom image folders
+- ⚡ Fast sampling: DDPM, DDIM, and StepDrop samplers
+- 🎲 StepDrop strategies: Linear, Quadratic, Cosine², Adaptive, and more
+- 🔧 Flexible configuration: CLI arguments or JSON config files
+- 📊 Evaluation metrics: FID, Inception Score, LPIPS, and more
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+## File Structure
+
+### Core Modules
+
+| File | Description |
+|:-----|:------------|
+| `src/config.py` | Configuration management with CLI argument parsing and JSON support |
+| `src/dataset.py` | Data loading for MNIST, CIFAR-10, and custom image datasets |
+| `src/modules.py` | U-Net architecture with ResNet blocks, attention, and time embeddings |
+| `src/scheduler.py` | Noise schedules (linear, cosine) and diffusion process variables |
+| `src/train.py` | Training script with checkpointing, logging, and LR scheduling |
+| `src/sample.py` | DDPM, DDIM, and StepDrop sampling with grid/individual image output |
+
+### Sampler Package (`src/sampler/`)
+
+| File | Description |
+|:-----|:------------|
+| `__init__.py` | Package exports for easy importing |
+| `DDPM.py` | Standard DDPM sampler (1000 steps) |
+| `DDIM.py` | Accelerated DDIM sampler (configurable steps) |
+| `stepdrop.py` | StepDrop and AdaptiveStepDrop samplers |
+
+### Evaluation (`src/eval/`)
+
+| File | Description |
+|:-----|:------------|
+| `metrics_utils.py` | FID, KID, IS, LPIPS, Precision/Recall, and more |
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
 
 ## Quick Start
 
@@ -84,24 +167,31 @@ python train.py --dataset cifar10 --epochs 50
 
 # Train on custom dataset
 python train.py \
-    --dataset custom \
-    --custom_data_dir /path/to/your/images \
-    --img_size 64 \
-    --channels 3 \
-    --epochs 100
+  --dataset custom \
+  --custom_data_dir /path/to/your/images \
+  --img_size 64 \
+  --channels 3 \
+  --epochs 100
 ```
 
 ### Sampling
 
 ```bash
-# DDPM sampling (high quality)
+# DDPM sampling (high quality, slow)
 python sample.py --checkpoint checkpoints/model.pt
 
 # DDIM sampling (fast)
 python sample.py \
-    --checkpoint checkpoints/model.pt \
-    --method ddim \
-    --ddim_steps 50
+  --checkpoint checkpoints/model.pt \
+  --method ddim \
+  --ddim_steps 50
+
+# StepDrop sampling (adaptive speed/quality)
+python sample.py \
+  --checkpoint checkpoints/model.pt \
+  --method stepdrop \
+  --skip_prob 0.3 \
+  --skip_strategy linear
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -158,11 +248,13 @@ python sample.py --checkpoint <path_to_model> [OPTIONS]
 
 | Argument | Default | Description |
 |:---------|:--------|:------------|
-| `--checkpoint` | **required** | Path to trained model |
-| `--method` | `ddpm` | Sampling method: `ddpm`, `ddim` |
+| `--checkpoint` | required | Path to trained model |
+| `--method` | `ddpm` | Sampling method: `ddpm`, `ddim`, `stepdrop`, `adaptive_stepdrop` |
 | `--n_samples` | `16` | Number of samples to generate |
-| `--ddim_steps` | `50` | DDIM sampling steps (faster = fewer) |
+| `--ddim_steps` | `50` | DDIM sampling steps |
 | `--ddim_eta` | `0.0` | DDIM stochasticity (0 = deterministic) |
+| `--skip_prob` | `0.3` | StepDrop skip probability (0.0-1.0) |
+| `--skip_strategy` | `linear` | StepDrop strategy (see below) |
 | `--output_dir` | `samples` | Output directory for images |
 | `--save_grid` | `True` | Save samples as image grid |
 | `--save_individual` | `False` | Save each sample individually |
@@ -170,11 +262,82 @@ python sample.py --checkpoint <path_to_model> [OPTIONS]
 
 ### Sampling Methods Comparison
 
-| Method | Steps | Speed | Quality |
-|:-------|:------|:------|:--------|
-| **DDPM** | 1000 | 🐢 Slow | ⭐⭐⭐ Best |
-| **DDIM** (50 steps) | 50 | 🚀 Fast | ⭐⭐ Great |
-| **DDIM** (25 steps) | 25 | ⚡ Very Fast | ⭐ Good |
+| Method | NFE | Speed | Quality | Use Case |
+|:-------|:----|:------|:--------|:---------|
+| DDPM | 1000 | Slow | Best | Final production samples |
+| DDIM (50) | 50 | Fast | Good | Quick iteration |
+| DDIM (25) | 25 | Faster | Decent | Rapid prototyping |
+| StepDrop | ~700 | Adaptive | Good | Balanced speed/quality |
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+## StepDrop Samplers
+
+StepDrop introduces stochastic step skipping for faster sampling with controllable quality tradeoffs.
+
+### Available Skip Strategies
+
+| Strategy | Formula | Description |
+|:---------|:--------|:------------|
+| `constant` | `p(t) = base_prob` | Fixed skip probability |
+| `linear` | `p(t) = base_prob * 4t(1-t)` | Parabolic, peaks at middle |
+| `cosine_sq` | `p(t) = base_prob * sin²(πt)` | Smooth cosine curve |
+| `quadratic` | `p(t) = base_prob * 16t²(1-t)²` | Sharper peak in middle |
+| `early_skip` | `p(t) = base_prob * t` | Skip more early (high noise) |
+| `late_skip` | `p(t) = base_prob * (1-t)` | Skip more late (low noise) |
+| `critical_preserve` | Variable | Low skip in [0.3, 0.7], high elsewhere |
+
+### Usage Examples
+
+```bash
+# Linear (default) - balanced approach
+python sample.py --checkpoint model.pt --method stepdrop \
+  --skip_prob 0.3 --skip_strategy linear
+
+# Quadratic - more aggressive middle skipping
+python sample.py --checkpoint model.pt --method stepdrop \
+  --skip_prob 0.5 --skip_strategy quadratic
+
+# Critical preserve - protect important timesteps
+python sample.py --checkpoint model.pt --method stepdrop \
+  --skip_prob 0.4 --skip_strategy critical_preserve
+
+# Adaptive - error-based dynamic skipping
+python sample.py --checkpoint model.pt --method adaptive_stepdrop \
+  --skip_prob 0.2
+```
+
+### Programmatic Usage
+
+```python
+from src.sampler import DDPMSampler, DDIMSampler, StepDropSampler, AdaptiveStepDropSampler
+
+# DDPM (baseline)
+sampler = DDPMSampler(num_timesteps=1000)
+samples = sampler.sample(model, shape=(16, 3, 32, 32), device="cuda")
+
+# DDIM (fast)
+sampler = DDIMSampler(num_timesteps=1000, num_inference_steps=50, eta=0.0)
+samples = sampler.sample(model, shape, device="cuda")
+
+# StepDrop
+sampler = StepDropSampler(num_timesteps=1000)
+samples, stats = sampler.sample(
+  model, shape, device="cuda",
+  skip_prob=0.3,
+  skip_strategy="linear"
+)
+print(f"Steps taken: {stats.steps_taken}, Skipped: {stats.steps_skipped}")
+
+# Adaptive StepDrop
+sampler = AdaptiveStepDropSampler(num_timesteps=1000)
+samples, stats = sampler.sample(
+  model, shape, device="cuda",
+  base_skip_prob=0.2
+)
+```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -191,10 +354,10 @@ my_dataset/
 ├── image1.png
 ├── image2.jpg
 ├── subfolder/
-│   ├── image3.png
-│   └── image4.jpg
+│  ├── image3.png
+│  └── image4.jpg
 └── another_folder/
-    └── image5.webp
+   └── image5.webp
 ```
 
 ### Supported Formats
@@ -211,11 +374,11 @@ my_dataset/
 
 ```bash
 python train.py \
-    --dataset custom \
-    --custom_data_dir ./my_dataset \
-    --img_size 64 \
-    --channels 3 \
-    --epochs 100
+  --dataset custom \
+  --custom_data_dir ./my_dataset \
+  --img_size 64 \
+  --channels 3 \
+  --epochs 100
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -236,14 +399,14 @@ Create a JSON configuration file:
 
 ```json
 {
-    "dataset": "cifar10",
-    "img_size": 32,
-    "channels": 3,
-    "batch_size": 128,
-    "epochs": 100,
-    "lr": 2e-4,
-    "base_channels": 128,
-    "schedule_type": "cosine"
+  "dataset": "cifar10",
+  "img_size": 32,
+  "channels": 3,
+  "batch_size": 128,
+  "epochs": 100,
+  "lr": 2e-4,
+  "base_channels": 128,
+  "schedule_type": "cosine"
 }
 ```
 
@@ -253,7 +416,7 @@ Use it with:
 python train.py --config my_config.json
 ```
 
-> 💡 **Tip**: CLI arguments override config file values, so you can use a base config and customize specific parameters.
+> Tip: CLI arguments override config file values.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -261,46 +424,16 @@ python train.py --config my_config.json
 
 ## CLI Reference
 
-### `train.py`
+### `src/train.py`
 
 ```bash
 python train.py --help
 ```
 
-```
-Usage: train.py [OPTIONS]
-
-Train a Tiny Diffusion Model
-
-Options:
-  --dataset          Dataset to use (mnist, cifar10, custom)
-  --batch_size       Training batch size
-  --epochs           Number of training epochs
-  --lr               Learning rate
-  --save_path        Path to save model checkpoint
-  --resume           Resume from checkpoint
-  --config           Load configuration from JSON file
-  ...
-```
-
-### `sample.py`
+### `src/sample.py`
 
 ```bash
 python sample.py --help
-```
-
-```
-Usage: sample.py --checkpoint <path> [OPTIONS]
-
-Generate samples from a trained diffusion model
-
-Options:
-  --checkpoint       Path to trained model (required)
-  --method           Sampling method (ddpm, ddim)
-  --n_samples        Number of samples to generate
-  --ddim_steps       DDIM sampling steps
-  --output_dir       Output directory for images
-  ...
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -309,69 +442,74 @@ Options:
 
 ## Examples
 
-### 1️⃣ Quick Test on MNIST
+### Quick Test on MNIST
 
 ```bash
 python train.py --epochs 5
 python sample.py --checkpoint checkpoints/model.pt
 ```
 
-### 2️⃣ Train on CIFAR-10 with Larger Model
+### Train on CIFAR-10 with Larger Model
 
 ```bash
 python train.py \
-    --dataset cifar10 \
-    --epochs 100 \
-    --base_channels 128 \
-    --batch_size 64
+  --dataset cifar10 \
+  --epochs 100 \
+  --base_channels 128 \
+  --batch_size 64
 ```
 
-### 3️⃣ Fast Sampling with DDIM
+### Fast Sampling with DDIM
 
 ```bash
 python sample.py \
-    --checkpoint checkpoints/model.pt \
-    --method ddim \
-    --ddim_steps 25 \
-    --n_samples 64
+  --checkpoint checkpoints/model.pt \
+  --method ddim \
+  --ddim_steps 25 \
+  --n_samples 64
 ```
 
-### 4️⃣ Train on Your Own Photos
+### StepDrop with Different Strategies
+
+```bash
+# Linear (default)
+python sample.py --checkpoint model.pt --method stepdrop --skip_strategy linear
+
+# Quadratic (more aggressive)
+python sample.py --checkpoint model.pt --method stepdrop --skip_strategy quadratic --skip_prob 0.5
+
+# Adaptive (error-based)
+python sample.py --checkpoint model.pt --method adaptive_stepdrop
+```
+
+### Train on Your Own Photos
 
 ```bash
 python train.py \
-    --dataset custom \
-    --custom_data_dir ~/my_photos \
-    --img_size 128 \
-    --channels 3 \
-    --batch_size 32 \
-    --epochs 200
+  --dataset custom \
+  --custom_data_dir ~/my_photos \
+  --img_size 128 \
+  --channels 3 \
+  --batch_size 32 \
+  --epochs 200
 ```
 
-### 5️⃣ Resume Interrupted Training
+### Resume Interrupted Training
 
 ```bash
 python train.py --resume checkpoints/checkpoint_epoch_50.pt
 ```
 
-### 6️⃣ Generate Many Samples
+### Generate Many Samples
 
 ```bash
 python sample.py \
-    --checkpoint checkpoints/model.pt \
-    --n_samples 100 \
-    --method ddim \
-    --ddim_steps 50 \
-    --output_dir my_samples/ \
-    --save_individual
+  --checkpoint checkpoints/model.pt \
+  --n_samples 100 \
+  --method ddim \
+  --ddim_steps 50 \
+  --output_dir my_samples/ \
+  --save_individual
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
-
----
-
-<div align="center">
-  <p>
-    <a href="../README.md">← Back to Main README</a>
-  </p>
-</div>
