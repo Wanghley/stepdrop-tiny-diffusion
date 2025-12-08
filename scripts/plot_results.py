@@ -4,6 +4,7 @@ Generate comprehensive plots from benchmark results.
 
 Usage:
     python scripts/plot_results.py --results results/
+    python scripts/plot_results.py --report results/2024-01-15_10-30-45/report.json
 """
 
 import argparse
@@ -13,6 +14,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 from pathlib import Path
+import seaborn as sns
+from scipy import stats
 
 # Duke Colors
 DUKE_BLUE = '#012169'
@@ -334,6 +337,239 @@ def plot_comprehensive_summary(df, output_dir):
     plt.close()
 
 
+# ============================================================================
+# ADVANCED PLOTTING FUNCTIONS
+# ============================================================================
+
+def plot_metric_comparison_grid(df, output_dir, figsize=(18, 12)):
+    """Multi-panel comparison of key metrics."""
+    metrics = [
+        ('fid', 'FID Score', '↓ Lower is Better', False),
+        ('is_mean', 'Inception Score', '↑ Higher is Better', True),
+        ('precision', 'Precision', '↑ Higher is Better', True),
+        ('recall', 'Recall', '↑ Higher is Better', True),
+        ('lpips', 'LPIPS (Perceptual)', '↓ Lower is Better', False),
+        ('ssim', 'SSIM', '↑ Higher is Better', True),
+        ('throughput', 'Throughput (img/s)', '↑ Higher is Better', True),
+        ('nfe', 'NFE (Steps)', '↓ Lower is Better', False),
+    ]
+    
+    # Filter to available metrics
+    available = [(m, l, d, h) for m, l, d, h in metrics if m in df.columns and df[m].max() > 0]
+    
+    if not available:
+        print("⚠️ No metrics available for comparison")
+        return
+    
+    fig, axes = plt.subplots(2, 4, figsize=figsize)
+    axes = axes.flatten()
+    
+    for idx, (metric, label, direction, higher_better) in enumerate(available):
+        ax = axes[idx]
+        
+        # Prepare data
+        valid_data = df[df[metric] > 0].sort_values(metric, ascending=not higher_better)
+        
+        if len(valid_data) == 0:
+            continue
+        
+        colors = [get_strategy_color(s) for s in valid_data['strategy']]
+        bars = ax.barh(range(len(valid_data)), valid_data[metric], color=colors, alpha=0.8, edgecolor='black', linewidth=1.5)
+        
+        # Styling
+        ax.set_yticks(range(len(valid_data)))
+        ax.set_yticklabels(valid_data['strategy'], fontsize=9)
+        ax.set_xlabel(f'{label} {direction}', fontweight='bold', fontsize=10)
+        ax.set_title(label, fontweight='bold', fontsize=11)
+        ax.grid(axis='x', alpha=0.3, linestyle='--')
+        
+        # Add value labels
+        for i, (bar, val) in enumerate(zip(bars, valid_data[metric])):
+            ax.text(val, bar.get_y() + bar.get_height()/2, 
+                   f' {val:.2f}' if val < 100 else f' {val:.0f}',
+                   ha='left', va='center', fontsize=8, fontweight='bold')
+    
+    # Hide unused subplots
+    for idx in range(len(available), len(axes)):
+        axes[idx].axis('off')
+    
+    fig.suptitle('Comprehensive Metric Comparison Across Strategies', 
+                fontsize=16, fontweight='bold', y=0.995)
+    plt.tight_layout()
+    
+    save_path = output_dir / "01_metric_comparison_grid.png"
+    plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+    print(f"✅ Saved: {save_path}")
+    plt.close()
+
+
+def plot_metrics_heatmap(df, output_dir, figsize=(14, 8)):
+    """Heatmap showing all metrics for each strategy."""
+    # Select key metrics
+    key_metrics = ['fid', 'is_mean', 'precision', 'recall', 'lpips', 'ssim', 
+                   'psnr', 'vendi_score', 'intra_lpips', 'throughput', 'nfe']
+    
+    available_metrics = [m for m in key_metrics if m in df.columns and df[m].max() > 0]
+    
+    if not available_metrics:
+        print("⚠️ No metrics for heatmap")
+        return
+    
+    # Prepare data
+    heatmap_data = df[['strategy'] + available_metrics].set_index('strategy')
+    
+    # Normalize each metric to 0-1 (inverted for "lower is better" metrics)
+    normalized_heatmap = heatmap_data.copy()
+    
+    lower_is_better = ['fid', 'lpips', 'nfe']
+    
+    for col in available_metrics:
+        col_data = heatmap_data[col]
+        valid = col_data[col_data > 0]
+        
+        if len(valid) > 0:
+            vmin, vmax = valid.min(), valid.max()
+            if vmin < vmax:
+                if col in lower_is_better:
+                    normalized_heatmap[col] = 1 - (col_data - vmin) / (vmax - vmin)
+                else:
+                    normalized_heatmap[col] = (col_data - vmin) / (vmax - vmin)
+            else:
+                normalized_heatmap[col] = 0.5
+        else:
+            normalized_heatmap[col] = 0
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Create heatmap
+    im = ax.imshow(normalized_heatmap.fillna(0).values, cmap='RdYlGn', aspect='auto', vmin=0, vmax=1)
+    
+    # Set ticks
+    ax.set_xticks(np.arange(len(available_metrics)))
+    ax.set_yticks(np.arange(len(normalized_heatmap)))
+    ax.set_xticklabels(available_metrics, rotation=45, ha='right', fontweight='bold')
+    ax.set_yticklabels(normalized_heatmap.index, fontweight='bold')
+    
+    # Add values
+    for i in range(len(normalized_heatmap)):
+        for j in range(len(available_metrics)):
+            val = heatmap_data.iloc[i, j]
+            if val > 0:
+                text = ax.text(j, i, f'{val:.1f}',
+                             ha="center", va="center", color="black", fontsize=8, fontweight='bold')
+    
+    # Colorbar
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label('Normalized Performance (Green=Better)', rotation=270, labelpad=20, fontweight='bold')
+    
+    ax.set_title('Metrics Heatmap: Strategy Performance Overview',
+                fontweight='bold', fontsize=14, pad=20)
+    
+    plt.tight_layout()
+    save_path = output_dir / "05_metrics_heatmap.png"
+    plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+    print(f"✅ Saved: {save_path}")
+    plt.close()
+
+
+def plot_metric_distributions(df, output_dir, figsize=(16, 10)):
+    """Box plots showing metric distributions."""
+    metrics = ['fid', 'is_mean', 'lpips', 'ssim', 'psnr', 'throughput']
+    available = [m for m in metrics if m in df.columns and df[m].max() > 0]
+    
+    if not available:
+        print("⚠️ No metrics for distribution plots")
+        return
+    
+    fig, axes = plt.subplots(2, 3, figsize=figsize)
+    axes = axes.flatten()
+    
+    for idx, metric in enumerate(available):
+        ax = axes[idx]
+        
+        # Prepare data
+        data_to_plot = []
+        labels = []
+        colors = []
+        
+        for _, row in df.iterrows():
+            if row[metric] > 0:
+                data_to_plot.append([row[metric]])
+                labels.append(row['strategy'])
+                colors.append(get_strategy_color(row['strategy']))
+        
+        if not data_to_plot:
+            continue
+        
+        # Create violin plot
+        parts = ax.violinplot(data_to_plot, positions=range(len(data_to_plot)), 
+                             showmeans=True, showmedians=True)
+        
+        # Color the violins
+        for pc, color in zip(parts['bodies'], colors):
+            pc.set_facecolor(color)
+            pc.set_alpha(0.7)
+        
+        ax.set_xticks(range(len(labels)))
+        ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=9)
+        ax.set_ylabel(metric.upper(), fontweight='bold', fontsize=10)
+        ax.set_title(f'Distribution of {metric.upper()}', fontweight='bold', fontsize=11)
+        ax.grid(axis='y', alpha=0.3, linestyle='--')
+    
+    # Hide unused plots
+    for idx in range(len(available), len(axes)):
+        axes[idx].axis('off')
+    
+    fig.suptitle('Metric Distribution Across Strategies', 
+                fontweight='bold', fontsize=14, y=0.995)
+    plt.tight_layout()
+    
+    save_path = output_dir / "06_metric_distributions.png"
+    plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+    print(f"✅ Saved: {save_path}")
+    plt.close()
+
+
+def plot_summary_statistics(df, output_dir):
+    """Generate summary statistics and print them."""
+    print("\n" + "="*70)
+    print("📈 BENCHMARK SUMMARY STATISTICS")
+    print("="*70)
+    
+    if 'fid' in df.columns:
+        valid_fid = df[df['fid'] > 0]['fid']
+        if len(valid_fid) > 0:
+            print(f"\n📊 FID Score (lower is better):")
+            print(f"  🏆 Best:  {valid_fid.min():.2f} ({df.loc[valid_fid.idxmin(), 'strategy']})")
+            print(f"  📉 Worst: {valid_fid.max():.2f} ({df.loc[valid_fid.idxmax(), 'strategy']})")
+            print(f"  📈 Mean:  {valid_fid.mean():.2f} ± {valid_fid.std():.2f}")
+    
+    if 'throughput' in df.columns:
+        valid_tp = df[df['throughput'] > 0]['throughput']
+        if len(valid_tp) > 0:
+            print(f"\n⚡ Throughput (higher is better):")
+            print(f"  🏆 Best:  {valid_tp.max():.2f} img/s ({df.loc[valid_tp.idxmax(), 'strategy']})")
+            print(f"  📉 Worst: {valid_tp.min():.2f} img/s ({df.loc[valid_tp.idxmin(), 'strategy']})")
+            print(f"  📈 Mean:  {valid_tp.mean():.2f} ± {valid_tp.std():.2f}")
+    
+    if 'nfe' in df.columns:
+        valid_nfe = df[df['nfe'] > 0]['nfe']
+        if len(valid_nfe) > 0:
+            print(f"\n⏱️  NFE - Function Evaluations (lower is faster):")
+            print(f"  🏆 Min:   {valid_nfe.min():.0f}")
+            print(f"  📈 Max:   {valid_nfe.max():.0f}")
+            print(f"  📊 Mean:  {valid_nfe.mean():.0f} ± {valid_nfe.std():.0f}")
+    
+    if 'precision' in df.columns and 'recall' in df.columns:
+        valid_prec = df[df['precision'] > 0]['precision']
+        valid_rec = df[df['recall'] > 0]['recall']
+        if len(valid_prec) > 0 and len(valid_rec) > 0:
+            print(f"\n🎯 Quality Metrics:")
+            print(f"  Precision: {valid_prec.mean():.4f} ± {valid_prec.std():.4f}")
+            print(f"  Recall:    {valid_rec.mean():.4f} ± {valid_rec.std():.4f}")
+    
+    print("="*70 + "\n")
+
 
 def generate_plots(report_path):
     """Generate all plots for a given report path."""
@@ -387,30 +623,44 @@ def generate_plots(report_path):
     
     print("\n🎨 Generating plots...")
     
-    # Generate all plots
+    # Generate original plots
     plot_pareto(df, output_dir)
     plot_metrics_comparison(df, output_dir)
     plot_nfe_vs_quality(df, output_dir)
     plot_metrics_radar(df, output_dir)
     plot_comprehensive_summary(df, output_dir)
     
-    print(f"\n🎉 All plots saved to: {output_dir}")
+    # Generate advanced plots
+    plot_metric_comparison_grid(df, output_dir)
+    plot_metrics_heatmap(df, output_dir)
+    plot_metric_distributions(df, output_dir)
+    
+    # Print summary statistics
+    plot_summary_statistics(df, output_dir)
+    
+    print(f"🎉 All plots saved to: {output_dir}")
 
 def main():
     parser = argparse.ArgumentParser(description="Generate Benchmark Plots")
     parser.add_argument("--results", type=str, default="results",
                         help="Results directory")
+    parser.add_argument("--report", type=str, default=None,
+                        help="Specific report directory")
     args = parser.parse_args()
     
     set_style()
     
-    try:
-        data, output_dir = load_latest_report(args.results)
-    except FileNotFoundError as e:
-        print(f"❌ {e}")
-        return
-    
-    generate_plots(output_dir)
+    if args.report:
+        # Use specific report directory
+        generate_plots(args.report)
+    else:
+        # Find latest report
+        try:
+            data, output_dir = load_latest_report(args.results)
+            generate_plots(output_dir)
+        except FileNotFoundError as e:
+            print(f"❌ {e}")
+            return
 
 if __name__ == "__main__":
     main()
