@@ -699,7 +699,7 @@ class TargetNFEStepDropSampler:
             start_range = int(self.num_timesteps * 0.1)
             end_range = int(self.num_timesteps * 0.1)
             
-            start_steps = np.linspace(self.num_timesteps - 1, self.num_timesteps - start_range, n_start, dtype=int)
+            start_steps = np.linspace(self.num_timesteps - 10, self.num_timesteps - start_range, n_start, dtype=int)
             end_steps = np.linspace(end_range, 0, n_end, dtype=int)
             middle_steps = np.linspace(self.num_timesteps - start_range - 1, end_range + 1, n_middle, dtype=int)
             
@@ -782,7 +782,7 @@ class TargetNFEStepDropSampler:
             alpha_cumprod_t = self.alphas_cumprod[t].to(device)
             
             # Predict x_0
-            pred_x0 = (x - torch.sqrt(1 - alpha_cumprod_t) * predicted_noise) / torch.sqrt(alpha_cumprod_t)
+            pred_x0 = (x - torch.sqrt(1 - alpha_cumprod_t) * predicted_noise) / (torch.sqrt(alpha_cumprod_t) + 1e-8)
             
             if clip_denoised:
                 pred_x0 = torch.clamp(pred_x0, -1, 1)

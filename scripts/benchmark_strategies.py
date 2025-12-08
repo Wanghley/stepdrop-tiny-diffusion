@@ -373,7 +373,7 @@ def load_model(checkpoint_path: Optional[str], device: str, dummy: bool = False)
         model = TinyUNet(img_size=config['img_size'], channels=config['channels'], base_channels=config['base_channels'])
     else:
         print(f"📦 Loading model from {checkpoint_path}")
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
         
         if isinstance(checkpoint, dict) and 'config' in checkpoint:
             ckpt_config = checkpoint['config']
