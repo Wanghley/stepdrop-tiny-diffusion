@@ -45,3 +45,4 @@ results/**/*.pt
 
 # MacOS
 .DS_Store
+cifar10_64ch_50ep.pt
