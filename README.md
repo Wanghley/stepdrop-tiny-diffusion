@@ -10,7 +10,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/wanghley/stepdrop-tiny-diffusion">
-    <img src="image.gif" alt="StepDrop Demo" width="280">
+    <img src="docs/Figures/plot_residuals.png" alt="StepDrop Demo" width="280">
   </a>
 
   <h3 align="center">StepDrop</h3>
@@ -29,11 +29,15 @@
     <li><a href="#about-the-project">About The Project</a></li>
     <li><a href="#built-with">Built With</a></li>
     <li><a href="#getting-started">Getting Started</a></li>
-    <li><a href="#usage">Usage</a></li>
+    <li><a href="#quick-start">Quick Start</a></li>
     <li><a href="#pipeline-script">Pipeline Script</a></li>
+    <li><a href="#training">Training</a></li>
+    <li><a href="#sampling">Sampling</a></li>
     <li><a href="#evaluation--benchmarking">Evaluation & Benchmarking</a></li>
+    <li><a href="#interpreting-metrics">Interpreting Metrics</a></li>
     <li><a href="#stepdrop-skip-strategies">StepDrop Skip Strategies</a></li>
-    <li><a href="#developer-guide">Developer Guide</a></li>
+    <li><a href="#visualization-utilities">Visualization Utilities</a></li>
+    <li><a href="#project-structure">Project Structure</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
     <li><a href="#contributing">Contributing</a></li>
     <li><a href="#license">License</a></li>
@@ -61,248 +65,391 @@ This repository contains the official implementation, experiments, and demo note
 
 ## Getting Started
 
-To get a local copy up and running, follow these simple steps.
-
-> Developer Guide: For module APIs and sampler details, see `src/README.md`.
-
 ### Prerequisites
 
-You will need Python 3.8+ and pip installed on your system.
-
-- [Python](https://www.python.org/)
-- [pip](https://pypi.org/project/pip/)
+- Python 3.8+
+- pip or conda
+- CUDA-compatible GPU (recommended)
 
 ### Installation
 
-1. Clone the repo
-
+1. Clone the repository
    ```sh
    git clone https://github.com/wanghley/stepdrop-tiny-diffusion.git
-   ```
-
-2. Navigate to the project directory
-   ```sh
    cd stepdrop-tiny-diffusion
    ```
-3. (Recommended) Create a virtual environment
+
+2. Create a virtual environment (recommended)
    ```sh
    python -m venv venv
-   source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
-4. Install required packages
+
+3. Install dependencies
    ```sh
    pip install -r requirements.txt
    ```
 
-### Try It
+4. Verify installation
+   ```sh
+   python scripts/checklibs.py
+   ```
 
-Jump straight into the pipeline and benchmarks:
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Quick Start
+
+### Interactive Menu
+
+The easiest way to get started is with the interactive quick start menu:
 
 ```bash
-# Pipeline (train → sample → evaluate)
+./scripts/quick_start.sh
+```
+
+This provides a menu-driven interface for common tasks like training, sampling, and benchmarking.
+
+### One-Command Pipeline
+
+Run the full pipeline (train → sample → evaluate) with a single command:
+
+```bash
 chmod +x scripts/pipeline.sh
 ./scripts/pipeline.sh --all --dataset cifar10 --epochs 10 --eval-samples 1000
-
-# Benchmark (FID/IS/throughput)
-python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --samples 1000
 ```
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+### Quick Test
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Interpreting Metrics
-
-When running `scripts/benchmark_strategies.py`, you will generate a `report.json`. Here is how to read the numbers:
-
-| Metric         | Full Name                  | Goal                    | Description                                                                                                                                                            |
-| :------------- | :------------------------- | :---------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **FID**        | Fréchet Inception Distance | **📉 Lower is better**  | Measures how similar the generated images are to the real dataset. <br>• **< 10**: State-of-the-art <br>• **10-30**: High quality <br>• **> 50**: Noticeable artifacts |
-| **IS**         | Inception Score            | **📈 Higher is better** | Measures "clarity" (does it look like an object?) and "diversity" (are there many types of objects?). <br>• For CIFAR-10, real data has IS ≈ 11.0.                     |
-| **Throughput** | Images Per Second          | **📈 Higher is better** | Raw generation speed. Higher throughput means lower latency.                                                                                                           |
-| **MACs/FLOPs** | Multiply-Accumulates       | **📉 Lower is better**  | The theoretical computational cost. StepDrop aims to reduce this by skipping steps.                                                                                    |
-| **Avg Steps**  | Average Steps Taken        | **📉 Lower is better**  | The average number of U-Net evaluations per image. <br>• **DDPM**: Always 1000 <br>• **DDIM**: Fixed (e.g., 50) <br>• **StepDrop**: Variable (e.g., ~700)              |
-
-## Usage
-
-### Command Line Interface (CLI)
-
-We provide a powerful benchmarking harness to evaluate model speed and quality (FID/IS) from the terminal.
-
-**Run Benchmark:**
+For a fast sanity check on MNIST:
 
 ```bash
-# Dry run with dummy model (verify setup)
-python scripts/benchmark_strategies.py --dummy --samples 10
-
-# Full evaluation with trained model
-python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --samples 5000
+./scripts/pipeline.sh --all --dataset mnist --epochs 5 --n-samples 16 --eval-samples 100
 ```
 
-- **Result**: Generates a `results/YYYY-MM-DD.../` folder with:
-  - `report.json`: Full metrics
-  - `report.csv`: Summary for Excel/Sheets
-  - `*.png`: **Automatically generated plots** (Pareto frontier, Radar charts, etc.)
-  - `samples/`: Sample images
-- **Help**: Run `python scripts/benchmark_strategies.py --help` for full options.
-
-<p align="right"\>(<a href="#readme-top"\>back to top\<a\>)\<p\>
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Pipeline Script
 
-The main automation entrypoint is `scripts/pipeline.sh`. It supports training, sampling, and comprehensive evaluation.
+The main automation tool is `scripts/pipeline.sh`. It orchestrates training, sampling, and evaluation.
 
-- Show help
+### Usage
 
 ```bash
-chmod +x scripts/pipeline.sh
-./scripts/pipeline.sh --help
+./scripts/pipeline.sh [OPTIONS]
 ```
 
-- Full pipeline (train → sample → evaluate)
+### Pipeline Stages
+
+| Flag | Description |
+|:-----|:------------|
+| `--train` | Run training stage |
+| `--sample` | Run sampling stage |
+| `--evaluate` | Run evaluation/benchmarking |
+| `--all` | Run all stages (train → sample → evaluate) |
+| `--clean` | Clean generated files |
+
+### Common Options
+
+| Option | Default | Description |
+|:-------|:--------|:------------|
+| `--dataset` | `cifar10` | Dataset: `mnist`, `cifar10`, `custom` |
+| `--epochs` | `50` | Training epochs |
+| `--batch-size` | `128` | Training batch size |
+| `--base-channels` | `64` | U-Net base channels |
+| `--checkpoint` | auto | Path to model checkpoint |
+| `--n-samples` | `64` | Number of samples to generate |
+| `--method` | `ddim` | Sampling method: `ddpm`, `ddim`, `stepdrop` |
+| `--eval-samples` | `1000` | Samples for FID/IS evaluation |
+| `--device` | `cuda` | Device: `cuda` or `cpu` |
+
+### Examples
 
 ```bash
-./scripts/pipeline.sh --all --dataset cifar10 --epochs 50 --eval-samples 1000
-```
+# Full CIFAR-10 training with evaluation
+./scripts/pipeline.sh --all --dataset cifar10 --epochs 100 --base-channels 128 --eval-samples 5000
 
-- Train only
-
-```bash
+# Train only on MNIST
 ./scripts/pipeline.sh --train --dataset mnist --epochs 20
+
+# Sample with DDIM from existing checkpoint
+./scripts/pipeline.sh --sample --checkpoint checkpoints/model.pt --method ddim --ddim-steps 50 --n-samples 64
+
+# Sample with StepDrop
+./scripts/pipeline.sh --sample --checkpoint checkpoints/model.pt --method stepdrop --skip-prob 0.3 --skip-strategy linear
+
+# Evaluate with full metrics
+./scripts/pipeline.sh --evaluate --checkpoint checkpoints/model.pt --eval-samples 5000 --full-metrics
+
+# Compare StepDrop strategies against DDIM baselines
+./scripts/pipeline.sh --evaluate --checkpoint checkpoints/model.pt --compare-stepdrop --eval-samples 1000
+
+# Dry run (show commands without executing)
+./scripts/pipeline.sh --all --dataset mnist --epochs 5 --dry-run
 ```
 
-- Sample only
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Training
+
+### Direct Training Script
 
 ```bash
-# DDPM
-./scripts/pipeline.sh --sample --checkpoint checkpoints/model.pt --method ddpm --n-samples 64
-# DDIM (fast)
-./scripts/pipeline.sh --sample --checkpoint checkpoints/model.pt --method ddim --ddim-steps 50 --n-samples 64
-# StepDrop
-./scripts/pipeline.sh --sample --checkpoint checkpoints/model.pt --method stepdrop \
-  --skip-prob 0.3 --skip-strategy linear --n-samples 64
+python src/train.py --dataset cifar10 --epochs 50 --batch_size 128
 ```
+
+### Training Options
+
+| Argument | Default | Description |
+|:---------|:--------|:------------|
+| `--dataset` | `mnist` | Dataset: `mnist`, `cifar10`, `custom` |
+| `--custom_data_dir` | `None` | Path to custom images folder |
+| `--img_size` | `28` | Image size |
+| `--channels` | `1` | Number of image channels |
+| `--batch_size` | `128` | Training batch size |
+| `--epochs` | `20` | Number of epochs |
+| `--lr` | `2e-4` | Learning rate |
+| `--n_timesteps` | `1000` | Diffusion timesteps |
+| `--schedule_type` | `cosine` | Noise schedule: `linear`, `cosine` |
+| `--base_channels` | `64` | U-Net base channels |
+| `--save_path` | `checkpoints/model.pt` | Model save path |
+| `--resume` | `None` | Resume from checkpoint |
+
+### Resume Training
+
+```bash
+python src/train.py --resume checkpoints/checkpoint_epoch_50.pt --epochs 100
+```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Sampling
+
+### Direct Sampling Script
+
+```bash
+python src/sample.py --checkpoint checkpoints/model.pt --method ddim --ddim_steps 50 --n_samples 16
+```
+
+### Sampling Methods
+
+| Method | Command | Description |
+|:-------|:--------|:------------|
+| **DDPM** | `--method ddpm` | Full 1000 steps, highest quality |
+| **DDIM** | `--method ddim --ddim_steps 50` | Accelerated, deterministic |
+| **StepDrop** | `--method stepdrop --skip_prob 0.3` | Stochastic step skipping |
+| **Adaptive StepDrop** | `--method adaptive_stepdrop` | Error-based dynamic skipping |
+
+### Sampling Options
+
+| Argument | Default | Description |
+|:---------|:--------|:------------|
+| `--checkpoint` | required | Path to trained model |
+| `--method` | `ddpm` | Sampling method |
+| `--n_samples` | `16` | Number of samples |
+| `--ddim_steps` | `50` | DDIM inference steps |
+| `--ddim_eta` | `0.0` | DDIM stochasticity (0 = deterministic) |
+| `--skip_prob` | `0.3` | StepDrop skip probability |
+| `--skip_strategy` | `linear` | StepDrop strategy |
+| `--output_dir` | `samples` | Output directory |
+| `--save_grid` | `True` | Save as image grid |
+| `--save_individual` | `False` | Save individual images |
+
+### Examples
+
+```bash
+# DDPM (best quality, slow)
+python src/sample.py --checkpoint checkpoints/model.pt --method ddpm --n_samples 16
+
+# DDIM (fast)
+python src/sample.py --checkpoint checkpoints/model.pt --method ddim --ddim_steps 25 --n_samples 64
+
+# StepDrop with linear strategy
+python src/sample.py --checkpoint checkpoints/model.pt --method stepdrop --skip_prob 0.3 --skip_strategy linear
+
+# StepDrop with quadratic strategy (more aggressive)
+python src/sample.py --checkpoint checkpoints/model.pt --method stepdrop --skip_prob 0.5 --skip_strategy quadratic
+
+# Adaptive StepDrop
+python src/sample.py --checkpoint checkpoints/model.pt --method adaptive_stepdrop
+```
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Evaluation & Benchmarking
 
-Run comprehensive benchmarks (FID, IS, throughput by default; add full metrics for KID, Precision/Recall, LPIPS, SSIM, PSNR, Vendi, etc.).
+### Benchmark Script
+
+Run comprehensive benchmarks comparing different sampling strategies:
 
 ```bash
-# Basic benchmark
+# Quick test with dummy model
+python scripts/benchmark_strategies.py --dummy --samples 10
+
+# Full benchmark with trained model
+python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --samples 5000
+
+# With full metrics (FID, KID, IS, Precision, Recall, LPIPS, SSIM, PSNR, Vendi)
+python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --samples 5000 --full-metrics
+```
+
+### Via Pipeline
+
+```bash
+# Basic evaluation
 ./scripts/pipeline.sh --evaluate --checkpoint checkpoints/model.pt --eval-samples 1000
 
 # Full metrics
 ./scripts/pipeline.sh --evaluate --checkpoint checkpoints/model.pt --eval-samples 5000 --full-metrics
 
-# Compare all StepDrop strategies against DDIM baselines
-./scripts/pipeline.sh --evaluate --checkpoint checkpoints/model.pt --compare-stepdrop --eval-samples 1000
+# Compare all StepDrop strategies vs DDIM
+./scripts/pipeline.sh --evaluate --checkpoint checkpoints/model.pt --compare-stepdrop
 
 # Evaluate only StepDrop variants
-./scripts/pipeline.sh --evaluate --checkpoint checkpoints/model.pt --stepdrop-only --eval-samples 1000
+./scripts/pipeline.sh --evaluate --checkpoint checkpoints/model.pt --stepdrop-only
 
 # Specific strategies only
 ./scripts/pipeline.sh --evaluate --checkpoint checkpoints/model.pt \
-  --strategies "DDIM_50,StepDrop_Linear_0.3,StepDrop_Quadratic_0.3" --eval-samples 1000
+  --strategies "DDIM_50,StepDrop_Linear_0.3,StepDrop_Quadratic_0.3"
 ```
 
-Results are saved under `results/<timestamp>/` with `report.json`, `report.csv`, and per-strategy sample images.
+### Output
+
+Results are saved to `results/<timestamp>/`:
+- `report.json` - Full metrics data
+- `report.csv` - Summary for Excel/Sheets
+- `*.png` - Auto-generated plots (Pareto frontier, radar charts, etc.)
+- `samples/` - Generated sample images per strategy
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Interpreting Metrics
+
+| Metric | Full Name | Goal | Description |
+|:-------|:----------|:-----|:------------|
+| **FID** | Fréchet Inception Distance | 📉 Lower is better | Similarity to real dataset. <10: excellent, 10-30: good, >50: poor |
+| **IS** | Inception Score | 📈 Higher is better | Clarity and diversity. CIFAR-10 real data ≈ 11.0 |
+| **KID** | Kernel Inception Distance | 📉 Lower is better | Similar to FID, less biased for small samples |
+| **Precision** | - | 📈 Higher is better | Quality: are generated images realistic? |
+| **Recall** | - | 📈 Higher is better | Diversity: does the model cover the data distribution? |
+| **LPIPS** | Perceptual Similarity | 📉 Lower is better | Perceptual distance (diversity among samples) |
+| **Throughput** | Images/Second | 📈 Higher is better | Generation speed |
+| **NFE** | Number of Function Evaluations | 📉 Lower is better | U-Net forward passes per image |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## StepDrop Skip Strategies
 
-StepDrop supports multiple ways to determine _which_ steps to skip:
+### Probability-Based Strategies (`StepDropSampler`)
 
-### 1. Probability Schedules (`StepDropSampler`)
+| Strategy | Formula | Description |
+|:---------|:--------|:------------|
+| `constant` | $P(t) = p$ | Fixed skip probability |
+| `linear` | $P(t) = p \cdot 4t(1-t)$ | Parabolic peak at middle |
+| `cosine_sq` | $P(t) = p \cdot \sin^2(\pi t)$ | Smooth cosine curve |
+| `quadratic` | $P(t) = p \cdot 16t^2(1-t)^2$ | Sharper middle peak |
+| `early_skip` | $P(t) = p \cdot t$ | Skip more at high noise |
+| `late_skip` | $P(t) = p \cdot (1-t)$ | Skip more at low noise |
+| `critical_preserve` | Variable | Protect [0.3, 0.7] interval |
 
-Defined by a probability curve $P_{skip}(t)$:
+### Adaptive Strategy (`AdaptiveStepDropSampler`)
 
-- **Linear**: Parabolic peak at middle (`4t(1-t)`). Good balance.
-- **Cosine²**: Smooth `sin²(πt)` curve. Gentle transitions.
-- **Quadratic**: Sharper middle peak (`16t²(1-t)²`). Aggressive middle skipping.
-- **Early/Late Skip**: Bias skipping to high-noise (early) or low-noise (late) regions.
-- **Critical Preserve**: Protects the critical [0.3, 0.7] interval.
-- **Aggressive Middle**: Heavily skips the safe middle region (up to 95%).
+Dynamically adjusts skipping based on reconstruction error:
+- Low error → skip more aggressively
+- High error → force denoising steps
 
-### 2. Adaptive Error-Based (`AdaptiveStepDropSampler`)
+### Target NFE Strategy (`TargetNFEStepDropSampler`)
 
-Dynamically adjusts skipping based on reconstruction stability:
+Targets a specific step budget:
+- `uniform` - Evenly spaced (like DDIM)
+- `importance` - More steps at start/end
+- `stochastic` - Random with boundary protection
 
-- **Low Error**: Skips more aggressively.
-- **High Error**: Forces denoising steps.
-- **Param**: `--skip-strategy adaptive`
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-### 3. Target NFE (`TargetNFEStepDropSampler`)
+## Visualization Utilities
 
-Directly targets a specific budget (e.g., 50 steps) instead of a probability:
-
-- **Uniform**: Evenly spaced steps (like DDIM).
-- **Importance**: Allocates more steps to start/end, fewer to middle.
-- **Stochastic**: Random selection with boundary protection.
-
----
-
-## Visualization & Poster Utilities
-
-We provide specialized scripts to generate figures for papers and posters:
-
-### 1. Comparison Grid
-
-Generate a side-by-side comparison (DDPM vs DDIM vs StepDrop) using the **same random seed**:
+### Generate Comparison Grid
 
 ```bash
 python scripts/generate_grid.py
 ```
+Output: `results/comparison_grid.png` - Side-by-side DDPM vs DDIM vs StepDrop
 
-_Output_: `results/comparison_grid.png`
-
-### 2. Schedule Visualization
-
-Visualize the probability curves and effective schedules:
+### Visualize Schedules
 
 ```bash
 python scripts/plot_schedules.py --save_path results/schedules.png
 ```
+Output: Probability curves and step sizes for different strategies
 
-### 3. Benchmark Plots
-
-Generate Pareto frontiers (FID vs Throughput) and radar charts from a report:
+### Benchmark Plots
 
 ```bash
 python scripts/plot_results.py --results results/2025-12-07_12-00-00/
 ```
+Output: Pareto frontiers, radar charts, metric comparisons
 
-### 4. Denoising Evolution ("Film Strip")
-
-Compare how DDIM vs StepDrop evolve images over time (t=1000 -> t=0):
+### Denoising Evolution
 
 ```bash
 python scripts/plot_denoising_evolution.py
 ```
+Output: `results/plot_denoising_evolution.png` - Film strip showing denoising progression
 
-_Output_: `results/plot_denoising_evolution.png`
+### Efficiency Plots
+
+```bash
+python scripts/plot_efficiency.py --results results/
+```
+Output: FLOPs/Memory analysis
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Developer Guide
+## Project Structure
 
-For module-level details, sampler APIs, and CLI options, see the developer-focused docs:
-
-- `src/README.md`: Core modules, `src/sampler/` (DDPM, DDIM, StepDrop, Adaptive), evaluation utilities, and examples.
-
-Quick pointers:
-
-- Try the pipeline:
-
-```bash
-chmod +x scripts/pipeline.sh
-./scripts/pipeline.sh --all --dataset cifar10 --epochs 10 --eval-samples 1000
+```
+stepdrop-tiny-diffusion/
+├── src/
+│   ├── config.py          # Configuration management
+│   ├── dataset.py         # Data loading (MNIST, CIFAR-10, custom)
+│   ├── modules.py         # U-Net architecture
+│   ├── scheduler.py       # Noise schedules
+│   ├── train.py           # Training script
+│   ├── sample.py          # Sampling script
+│   ├── sampler/           # Sampler implementations
+│   │   ├── DDPM.py
+│   │   ├── DDIM.py
+│   │   ├── StepDrop.py
+│   │   └── AdaptiveStepDrop.py
+│   └── eval/              # Evaluation metrics
+│       └── metrics_utils.py
+├── scripts/
+│   ├── pipeline.sh        # Main automation script
+│   ├── quick_start.sh     # Interactive menu
+│   ├── benchmark_strategies.py
+│   ├── plot_results.py
+│   ├── plot_schedules.py
+│   ├── plot_denoising_evolution.py
+│   └── generate_grid.py
+├── notebooks/             # Jupyter notebooks
+├── checkpoints/           # Saved models
+├── samples/               # Generated samples
+├── results/               # Benchmark results
+└── docs/                  # Documentation
 ```
 
-- Run the benchmark directly:
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## HPC / SLURM Support
+
+For cluster environments:
 
 ```bash
-python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --samples 1000
+# Submit job to SLURM
+sbatch scripts/run_pipeline.slurm
+
+# With custom arguments
+sbatch scripts/run_pipeline.slurm --train --dataset cifar10 --epochs 100
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -310,25 +457,28 @@ python scripts/benchmark_strategies.py --checkpoint checkpoints/model.pt --sampl
 ## Roadmap
 
 - [x] Core StepDrop sampler implementation
+- [x] Pipeline automation script
+- [x] Comprehensive benchmarking suite
+- [x] Multiple skip strategies
 - [x] Example notebook for Tiny Diffusion
 - [x] Example notebook for Stable Diffusion 1.5
-- [ ] Package the sampler as a pip-installable library
-- [ ] Add support for more diffusion schedulers
-- [ ] Integrate directly into the `diffusers` library
+- [ ] Package as pip-installable library
+- [ ] Integration with HuggingFace Diffusers
+- [ ] Support for more diffusion schedulers
 
-See the [open issues](https://www.google.com/search?q=https://github.com/wanghley/stepdrop-tiny-diffusion/issues) for a full list of proposed features and known issues.
+See [open issues](https://github.com/wanghley/stepdrop-tiny-diffusion/issues) for proposed features and known issues.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Contributing
 
-Contributions are welcome\! If you have suggestions, improvements, or bug fixes, feel free to open an issue or submit a pull request.
+Contributions are welcome!
 
-1.  Fork the Project
-2.  Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3.  Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4.  Push to the Branch (`git push origin feature/AmazingFeature`)
-5.  Open a Pull Request
+1. Fork the Project
+2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the Branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -352,7 +502,7 @@ Project Link: [https://github.com/wanghley/stepdrop-tiny-diffusion](https://gith
 - [Choose an Open Source License](https://choosealicense.com)
 - [Img Shields](https://shields.io)
 
-<p align="right">(<a href="#readme-top">back to top<a\>)<p\>
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 <!-- MARKDOWN LINKS & IMAGES -->
 
@@ -365,7 +515,7 @@ Project Link: [https://github.com/wanghley/stepdrop-tiny-diffusion](https://gith
 [issues-shield]: https://img.shields.io/github/issues/wanghley/stepdrop-tiny-diffusion.svg?style=for-the-badge
 [issues-url]: https://github.com/wanghley/stepdrop-tiny-diffusion/issues
 [license-shield]: https://img.shields.io/github/license/wanghley/stepdrop-tiny-diffusion.svg?style=for-the-badge
-[license-url]: https://github.com/wanghley/stepdrop-tiny-diffusionblob/master/LICENSE.txt
+[license-url]: https://github.com/wanghley/stepdrop-tiny-diffusion/blob/master/LICENSE.txt
 [linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=for-the-badge&logo=linkedin&colorB=555
 [linkedin-url]: https://linkedin.com/in/wanghley
 [product-screenshot]: images/screenshot.png
