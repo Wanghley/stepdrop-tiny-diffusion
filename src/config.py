@@ -6,12 +6,41 @@ import json
 from pathlib import Path
 
 
+def get_best_device() -> str:
+    """
+    Get the best available compute device.
+    
+    Priority: CUDA (NVIDIA) > MPS (Apple Silicon) > CPU
+    
+    Returns:
+        str: Device string ('cuda', 'mps', or 'cpu')
+    """
+    if torch.cuda.is_available():
+        return "cuda"
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        return "mps"
+    else:
+        return "cpu"
+
+
+def get_device_info(device: str) -> str:
+    """Get human-readable device information."""
+    if device == "cuda":
+        name = torch.cuda.get_device_name(0)
+        mem = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        return f"CUDA - {name} ({mem:.1f} GB)"
+    elif device == "mps":
+        return "MPS - Apple Silicon GPU"
+    else:
+        return "CPU"
+
+
 @dataclass
 class Config:
     """Configuration for diffusion model training and sampling."""
     
-    # Device
-    device: str = field(default_factory=lambda: "cuda" if torch.cuda.is_available() else "cpu")
+    # Device - auto-detect best available
+    device: str = field(default_factory=get_best_device)
     
     # Data
     dataset: str = "mnist"  # mnist, cifar10, custom
@@ -35,41 +64,19 @@ class Config:
     
     # Scheduler
     schedule_type: str = "cosine"  # linear, cosine
-    beta_start: float = 1e-4
-    beta_end: float = 0.02
+    
+    # Sampling
+    method: str = "ddpm"  # ddpm, ddim, stepdrop
+    ddim_steps: int = 50
+    skip_prob: float = 0.3
+    skip_strategy: str = "linear"
     
     # Paths
     save_path: str = "checkpoints/model.pt"
     log_dir: str = "logs"
-    sample_dir: str = "samples"
-    
-    # Sampling
-    n_samples: int = 16
-    sampling_method: str = "ddpm"  # ddpm, ddim
-    ddim_steps: int = 50
-    ddim_eta: float = 0.0
-    
-    # Resume training
-    resume: Optional[str] = None  # Path to checkpoint to resume from
     
     # Misc
     seed: Optional[int] = None
-    num_workers: int = 4
-    
-    def __post_init__(self):
-        """Auto-configure based on dataset."""
-        if self.dataset == "mnist":
-            self.img_size = 28
-            self.channels = 1
-        elif self.dataset == "cifar10":
-            self.img_size = 32
-            self.channels = 3
-        # custom dataset keeps user-specified values
-    
-    @classmethod
-    def from_args(cls, args: argparse.Namespace) -> "Config":
-        """Create config from argparse namespace."""
-        return cls(**{k: v for k, v in vars(args).items() if k in cls.__dataclass_fields__})
     
     @classmethod
     def from_json(cls, path: str) -> "Config":
@@ -120,10 +127,10 @@ def add_common_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--save_path", type=str, default="checkpoints/model.pt",
                         help="Path to save/load model")
     
-    # Device
+    # Device - auto-detect by default
     parser.add_argument("--device", type=str, 
-                        default="cuda" if torch.cuda.is_available() else "cpu",
-                        help="Device to use")
+                        default=get_best_device(),
+                        help="Device to use (cuda, mps, cpu). Auto-detected by default.")
     parser.add_argument("--seed", type=int, default=None,
                         help="Random seed for reproducibility")
     
