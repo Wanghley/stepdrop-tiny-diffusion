@@ -10,7 +10,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/wanghley/stepdrop-tiny-diffusion">
-    <img src="docs/Figures/plot_residuals.png" alt="StepDrop Demo" width="280">
+    <img src="docs/Figures/comparison-methodologies-matrix.png" alt="StepDrop Demo" width="350">
   </a>
 
   <h3 align="center">StepDrop</h3>
