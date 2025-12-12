@@ -492,7 +492,7 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 Wanghley Soares Martins - [@wanghley](https://instagram.com/wanghley) - me@wanghley.com
 
-Nicolas Vasilescu - [@Nicolas](https://www.linkedin.com/in/nicolasvasilescu/)
+Nicolas Vasilescu - [@NicolasVasilescu](https://www.linkedin.com/in/nicolasvasilescu/)
 
 Project Link: [https://github.com/wanghley/stepdrop-tiny-diffusion](https://github.com/wanghley/stepdrop-tiny-diffusion)
 
