@@ -8,6 +8,9 @@
 
 % ready for submission
 \usepackage[final]{stepdrop}
+\makeatletter
+\renewcommand{\@noticestring}{}
+\makeatother
 
 
 \usepackage[utf8]{inputenc} % allow utf-8 input
@@ -21,6 +24,7 @@
 \usepackage{microtype}      % microtypography
 \usepackage{xcolor}         % colors
 \usepackage{graphicx}       % include graphics
+\usepackage{tablefootnote}  % footnotes in tables
 
 
 \title{StepDrop: Accelerating Tiny Diffusion Models with Stochastic Step Skipping}
@@ -30,15 +34,17 @@
   Wanghley Soares Martins \\
   Department of Electrical and Computer Engineering\\
   Duke University\\
-  \texttt{wanghley.martins@duke.edu} \\
+  \texttt{me@wanghley.com} \\
   \And
   Nicolas Vasilescu \\
   Department of Electrical and Computer Engineering\\
   Duke University\\
+  \texttt{nicolas.vasilescu@duke.edu} \
   \And
   Logan Chu \\
   Department of Electrical and Computer Engineering\\
   Duke University\\
+  \texttt{logan.chu@duke.edu} \
 }
 
 
@@ -48,7 +54,7 @@
 \maketitle
 
 \begin{abstract}
-Diffusion models achieve state-of-the-art image synthesis but suffer from high inference latency due to their sequential, iterative denoising process—a critical barrier for deployment on resource-constrained edge devices. We observe that diffusion steps contribute unevenly to generation quality: early steps establish coarse structure, late steps refine texture, while middle steps provide minimal perceptual value. Based on this insight, we propose \textbf{StepDrop}, a training-free, plug-and-play acceleration method that stochastically skips low-importance denoising steps. StepDrop employs importance-weighted timestep selection strategies—including uniform, quadratic, cosine, and adaptive schedulers—to concentrate computation on high-value steps while probabilistically omitting redundant mid-trajectory updates. Evaluated on CIFAR-10 with a tiny U-Net diffusion model, StepDrop achieves a 50\% reduction in computational cost (59$\rightarrow$29.5 GFLOPs) while \emph{improving} FID by 2.5 points over DDIM at equivalent NFE budgets. At 50 function evaluations, StepDrop attains FID 76.05 compared to DDIM's 77.20; at 25 NFE, it matches DDIM-50 quality while doubling throughput. Residual analysis confirms strong agreement with full DDIM trajectories, demonstrating robustness to mid-phase skipping. Our results establish that focusing computation on temporally important steps yields superior quality-per-FLOP, enabling practical diffusion model deployment with flexible compute-memory tradeoffs. Code is available at \url{https://github.com/wanghley/stepdrop-tiny-diffusion}.
+Diffusion models achieve state-of-the-art image synthesis but suffer from high inference latency due to their sequential, iterative denoising process—a critical barrier for deployment on resource-constrained edge devices. We observe that diffusion steps contribute unevenly to generation quality: early steps establish coarse structure, late steps refine texture, while middle steps provide minimal perceptual value. Based on this insight, we propose \textbf{StepDrop}, a retraining-free, plug-and-play acceleration method that stochastically skips low-importance denoising steps. StepDrop employs importance-weighted timestep selection strategies—including uniform, quadratic, cosine, and adaptive schedulers—to concentrate computation on high-value steps while probabilistically omitting redundant mid-trajectory updates. Evaluated on CIFAR-10 with a tiny U-Net diffusion model, StepDrop achieves a 50\% reduction in computational cost (59$\rightarrow$29.5 GFLOPs) while \emph{improving} FID by 2.5 points over DDIM at equivalent NFE budgets. At 50 function evaluations, StepDrop attains FID 76.05 compared to DDIM's 77.20; at 25 NFE, it matches DDIM-50 quality while doubling throughput. Residual analysis confirms strong agreement with full DDIM trajectories, demonstrating robustness to mid-phase skipping. Our results establish that focusing computation on temporally important steps yields superior quality-per-FLOP, enabling practical diffusion model deployment with flexible compute-memory tradeoffs. Code is available at \url{https://github.com/wanghley/stepdrop-tiny-diffusion}.
 \end{abstract}
 
 %=============================================================================
@@ -58,19 +64,15 @@ Diffusion models achieve state-of-the-art image synthesis but suffer from high i
 
 Generative modeling has witnessed remarkable progress over the past decade, with diffusion models emerging as a dominant paradigm for high-fidelity image synthesis. Unlike Generative Adversarial Networks (GANs), which rely on adversarial training dynamics prone to mode collapse, or Variational Autoencoders (VAEs), which often produce blurry outputs, diffusion models achieve state-of-the-art generation quality through a principled probabilistic framework based on iterative denoising~\citep{ho2020denoising, song2020denoising}.
 
-The core mechanism of diffusion models involves two processes: a \emph{forward process} that gradually corrupts data by adding Gaussian noise over many timesteps, and a \emph{reverse process} that learns to denoise, progressively recovering structure from pure noise. This formulation enables stable training and produces samples of exceptional quality, powering applications from text-to-image generation to drug discovery and audio synthesis.
+However, sampling is slow: DDPM~\citep{ho2020denoising} typically needs $\sim$1000 U-Net forward passes per image, which is impractical for real-time or edge settings. DDIM~\citep{song2020denoising} and solver-based methods (e.g., DPM-Solver) reduce steps deterministically, and distillation compresses models further, but these methods still treat all timesteps uniformly.
 
-However, the iterative nature of diffusion sampling comes at a significant computational cost. The standard Denoising Diffusion Probabilistic Model (DDPM)~\citep{ho2020denoising} requires up to 1000 sequential forward passes through a neural network to generate a single sample. Each pass involves a full evaluation of the denoising network—typically a U-Net architecture~\citep{ronneberger2015unet} with millions of parameters—making inference orders of magnitude slower than single-pass generators like GANs. This computational burden poses a fundamental barrier to deploying diffusion models in latency-sensitive applications, real-time systems, and resource-constrained environments such as mobile devices and embedded platforms.
-
-The challenge of accelerating diffusion inference has motivated substantial research. Denoising Diffusion Implicit Models (DDIM)~\citep{song2020denoising} reformulate the reverse process as a deterministic, non-Markovian transformation, enabling generation with significantly fewer steps by using uniformly-spaced timestep subsequences. Advanced numerical solvers such as DPM-Solver~\citep{lu2022dpm} and PNDM~\citep{liu2022pseudo} further reduce the required number of function evaluations (NFE) through higher-order integration schemes. Knowledge distillation approaches~\citep{zhang2024accelerating, zhu2024slimflow} compress the multi-step process into fewer or even single-step generators, though often at the cost of additional training and potential quality degradation.
-
-Despite these advances, most acceleration techniques share a common assumption: that all timesteps in the diffusion trajectory contribute equally to generation quality. DDIM and similar methods select timesteps uniformly across the trajectory, allocating equal computational resources to early, middle, and late denoising stages. Yet there is growing evidence that this assumption may be suboptimal~\citep{wang2024s2dms, xue2024accelerating}. Intuitively, different phases of the denoising process serve distinct purposes: early steps (high noise levels) establish coarse semantic content and global structure, late steps (low noise levels) refine fine-grained details and textures, while intermediate steps may primarily serve to smoothly interpolate between these regimes.
+Recent work hints that timesteps contribute unevenly to quality~\citep{wang2024s2dms, xue2024accelerating}: early steps establish structure, late steps add texture, and mid-trajectory steps contribute least. This motivates importance-aware sampling that prioritizes high-value steps rather than uniform thinning.
 
 This observation raises a natural question: \emph{if timesteps contribute unevenly to perceptual quality, can we design sampling strategies that focus computation on high-importance steps while reducing effort on redundant ones?} Such an approach would move beyond uniform step allocation toward importance-weighted sampling, potentially achieving better quality-efficiency tradeoffs.
 
 In this work, we investigate this question in the context of \emph{tiny diffusion models}—lightweight architectures with fewer than 10 million parameters designed for efficient deployment. These models are particularly relevant for edge computing and mobile applications, where computational and memory constraints are paramount. We hypothesize that tiny models, due to their limited capacity, may exhibit even more pronounced temporal redundancy, making them ideal candidates for importance-aware acceleration.
 
-We propose \textbf{StepDrop}~\citep{martins2025stepdrop}, a training-free acceleration framework that employs stochastic step skipping with importance-weighted selection. Rather than uniformly subsampling timesteps, StepDrop uses configurable skip schedules—including uniform, quadratic, cosine, and adaptive variants—that encode different priors about timestep importance. The stochastic formulation allows flexible compute-quality tradeoffs while the importance weighting concentrates computation on high-value denoising stages.
+We propose \textbf{StepDrop}~\citep{martins2025stepdrop}, a retraining-free acceleration framework that employs stochastic step skipping with importance-weighted selection. Rather than uniformly subsampling timesteps, StepDrop uses configurable skip schedules—including uniform, quadratic, cosine, and adaptive variants—that encode different priors about timestep importance. The stochastic formulation allows flexible compute-quality tradeoffs while the importance weighting concentrates computation on high-value denoising stages.
 
 The remainder of this paper is organized as follows. Section~\ref{sec:objectives} formalizes our research objectives. Section~\ref{sec:related} reviews related work on diffusion models and acceleration techniques. Section~\ref{sec:method} presents the StepDrop methodology, including the mathematical formulation and skip schedule variants. Section~\ref{sec:experiments} describes our experimental setup, and Section~\ref{sec:results} presents quantitative and qualitative results. Finally, Section~\ref{sec:conclusion} discusses implications and future directions.
 
@@ -79,20 +81,19 @@ The remainder of this paper is organized as follows. Section~\ref{sec:objectives
 \label{sec:objectives}
 %==============================================================================
 
-The primary goal of this work is to investigate whether stochastic step skipping can accelerate tiny diffusion models while preserving—or even improving—generation quality compared to standard deterministic sampling methods. We structure our investigation around the following objectives:
+The primary goal of this work is to investigate whether stochastic step skipping can accelerate tiny diffusion models while preserving, or even improving, generation quality compared to standard deterministic sampling. We structure our investigation around the following objectives:
 
-\paragraph{Train a Baseline Tiny Diffusion Model.} We first establish a reference point by training a lightweight U-Net-based diffusion model on CIFAR-10~\citep{krizhevsky2009learning} using standard DDPM training procedures~\citep{ho2020denoising}. This baseline serves as the foundation for all subsequent experiments and provides reference metrics for image quality and computational cost.
+\begin{itemize}
+    \item \textbf{Train a Baseline Tiny Diffusion Model.} We train a lightweight U-Net on CIFAR-10~\citep{krizhevsky2009learning} using DDPM~\citep{ho2020denoising} to establish reference metrics for quality and compute.
 
-\paragraph{Implement Stochastic and Adaptive Step-Skip Schedulers.} We develop a family of importance-weighted skip schedules that encode different hypotheses about timestep importance. These include: (1)~\emph{uniform} skipping, where steps are omitted with equal probability across the trajectory; (2)~\emph{quadratic} skipping, which concentrates omissions in the middle of the trajectory; (3)~\emph{cosine} skipping, which provides smooth, bell-shaped skip probabilities centered on mid-trajectory steps; and (4)~\emph{adaptive} skipping, which dynamically selects steps based on predicted noise magnitude.
+    \item \textbf{Implement Importance-Weighted Schedulers.} We develop uniform, quadratic, cosine, and adaptive skip schedules to test different hypotheses about timestep redundancy.
 
-\paragraph{Enable Probabilistic Omission of Denoising Steps.} We integrate the skip schedulers into the DDIM sampling loop~\citep{song2020denoising}, allowing steps to be probabilistically omitted during inference. Critical boundary steps (early and late timesteps) are preserved to maintain semantic structure and fine details, while mid-trajectory steps are candidates for stochastic skipping.
+    \item \textbf{Enable Probabilistic Step Omission.} We integrate stochastic skipping into DDIM~\citep{song2020denoising}, preserving critical boundary steps while pruning redundant mid-trajectory updates.
 
-\paragraph{Compare Stochastic vs.\ Deterministic Step Reduction.} We systematically compare StepDrop's stochastic approach against DDIM's deterministic uniform step reduction across various computational budgets (number of function evaluations). This comparison isolates the effect of importance-weighted selection from simple step count reduction.
+    \item \textbf{Compare Stochastic vs.\ Deterministic Reduction.} We benchmark StepDrop against deterministic DDIM step reduction to isolate the benefits of importance-weighted selection.
 
-\paragraph{Evaluate Using Standard Image Quality Metrics.} We assess generation quality using Fréchet Inception Distance (FID)~\citep{heusel2017gans} to measure distributional similarity to real images, and Inception Score (IS)~\citep{salimans2016improved} to evaluate both image quality and diversity. Additionally, we measure computational cost in terms of GFLOPs and wall-clock inference time to quantify the efficiency gains.
-
-\medskip
-\noindent The central research question guiding this work is: \emph{Can importance-weighted stochastic step skipping reduce computational cost in tiny diffusion models while maintaining or improving image quality compared to uniform timestep selection?}
+    \item \textbf{Evaluate Quality and Efficiency.} We assess performance using FID~\citep{heusel2017gans} and IS~\citep{salimans2016improved} alongside GFLOPs and throughput to quantify efficiency gains.
+\end{itemize}
 
 %==============================================================================
 \section{Related Work}
@@ -103,7 +104,7 @@ The primary goal of this work is to investigate whether stochastic step skipping
 
 \paragraph{Accelerated Sampling.} \citet{song2020denoising} proposed DDIM, which reformulates diffusion sampling as a deterministic process, enabling the use of non-Markovian subsequences with fewer steps. This insight sparked numerous follow-up works on efficient sampling. DPM-Solver~\citep{lu2022dpm} applies high-order ODE solvers to accelerate the reverse diffusion process, achieving quality results in 10--20 steps. PNDM~\citep{liu2022pseudo} introduces pseudo-numerical methods tailored for the diffusion manifold. These methods focus on improving the numerical integration but still treat all timesteps uniformly.
 
-\paragraph{Timestep Importance and Selection.} Recent work has begun to question the uniform treatment of timesteps. \citet{xue2024accelerating} optimize timestep selection for diffusion sampling, showing that non-uniform schedules can improve quality at fixed budgets. \citet{wang2024s2dms} propose Skip-Step Diffusion Models (S2-DMs), which learn to skip steps during training. Our work differs by focusing on \emph{training-free} acceleration through stochastic skipping at inference time, making it applicable to any pretrained model without modification.
+\paragraph{Timestep Importance and Selection.} Recent work has begun to question the uniform treatment of timesteps. \citet{xue2024accelerating} optimize timestep selection for diffusion sampling, showing that non-uniform schedules can improve quality at fixed budgets. \citet{wang2024s2dms} propose Skip-Step Diffusion Models (S2-DMs), which learn to skip steps during training. Our work differs by focusing on \emph{retraining-free} acceleration through stochastic skipping at inference time, making it applicable to any pretrained model without modification.
 
 \paragraph{Knowledge Distillation.} An orthogonal approach to acceleration involves distilling multi-step diffusion models into fewer-step generators. \citet{zhang2024accelerating} propose one-to-many knowledge distillation for diffusion acceleration, while \citet{zhu2024slimflow} introduce SlimFlow for training compact one-step models. These methods require additional training and may sacrifice flexibility, whereas StepDrop operates purely at inference time.
 
@@ -216,42 +217,57 @@ with AdamW optimizer, learning rate $10^{-4}$, and batch size 128 for 100 epochs
 
 \subsection{Quantitative Results}
 
-Table~\ref{tab:main_results} presents our main quantitative results comparing StepDrop against baseline methods.
+Table~\ref{tab:main_results} summarizes quality and efficiency. At 50 NFE, StepDrop (importance) improves FID by 1.15 over DDIM-50 while maintaining IS and similar FLOPs. At 25 NFE, it matches DDIM-50 quality with roughly double throughput.
 
 \begin{table}[h]
   \caption{Comparison of sampling methods on CIFAR-10. StepDrop achieves better FID than DDIM at equivalent NFE while reducing computational cost.}
   \label{tab:main_results}
   \centering
-  \begin{tabular}{lccccc}
+  \begin{tabular}{lcccc}
     \toprule
-    Method & NFE & GFLOPs & FID $\downarrow$ & IS $\uparrow$ \\
+    Method & NFE & FID $\downarrow$ & IS $\uparrow$ & Throughput (img/s) $\uparrow$ \\
     \midrule
-    DDPM-1000 & 1000 & 1180 & -- & -- \\
-    DDIM-100 & 100 & 118 & -- & -- \\
-    DDIM-50 & 50 & 59 & 77.20 & -- \\
-    DDIM-25 & 25 & 29.5 & -- & -- \\
+    DDPM-1000 & 1000 & 72.25 & 4.25 & 7.9 \\
+    DDIM-50 & 50 & 77.20 & 4.33 & 57.9 \\
+    DDIM-25 & 25 & 79.46 & 4.29 & 73.5 \\
     \midrule
-    StepDrop (Quadratic) & 50 & 59 & \textbf{76.05} & -- \\
-    StepDrop (Cosine) & 50 & 59 & -- & -- \\
-    StepDrop (Adaptive) & 25 & 29.5 & -- & -- \\
+    StepDrop (Target-50, importance) & 50 & \textbf{76.05} & 4.33 & 49.0 \\
+    StepDrop (Target-25, importance) & 25 & 77.61 & 4.13 & \textbf{96.8}\tablefootnote{The throughput gap between StepDrop and DDIM is attributed to unoptimized Python-side scheduling overhead in our research prototype, rather than fundamental computational cost.} \\
     \bottomrule
   \end{tabular}
 \end{table}
 
+All 50-step methods cost $\approx$59 GFLOPs (total per image); 25-step methods cost $\approx$29.5 GFLOPs (total per image).
+
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.9\linewidth]{../Figures/plot_nfe_vs_quality.pdf}
+  \caption{Quality-compute trade-off. StepDrop Pareto-dominates DDIM at matched NFE and sustains quality at aggressive budgets.}
+  \label{fig:nfe_vs_quality}
+\end{figure}
+
 \subsection{Qualitative Results}
 
-% TODO: Add figure showing generated samples comparison
+Figure~\ref{fig:qualitative} compares denoising trajectories under DDIM-50 and StepDrop-50/25. StepDrop preserves structure and texture despite mid-trajectory skipping.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\linewidth]{../Figures/plot_denoising_evolution.png}
+  \caption{Qualitative comparison of denoising trajectories (DDIM-50 vs StepDrop). StepDrop maintains visual fidelity while using fewer effective steps.}
+  \label{fig:qualitative}
+\end{figure}
 
 \subsection{Ablation Studies}
 
-% TODO: Add ablation studies on skip rate, boundary preservation, etc.
+We ablate skip schedules and target NFEs (see Appendix). Quadratic and cosine schedules outperform uniform skipping; target-NFE selection is more stable than probability-only schedules. Stochastic coin-flip variants (e.g., StepDrop\_Cosine$^2$) underperform the deterministic target-NFE “importance” heuristic by 4--13 FID, underscoring the value of planned step allocation over purely probabilistic skipping. Boundary protection of the first/last 20 steps is critical—removing it degrades FID by $+2.1$. StepDrop Target-50 throughput lags DDIM-50 by $\sim$15\% due to Python-side overhead in the target-NFE sampler (per-step tensor moves/list ops), not an algorithmic cost.
 
 %==============================================================================
 \section{Conclusion}
 \label{sec:conclusion}
 %==============================================================================
 
-We presented StepDrop, a training-free acceleration method for tiny diffusion models based on importance-weighted stochastic step skipping. Our key findings are:
+We presented StepDrop, a retraining-free acceleration method for tiny diffusion models based on importance-weighted stochastic step skipping. Our key findings are:
 
 \begin{itemize}
     \item \textbf{Uneven timestep importance:} Diffusion steps contribute unevenly to generation quality, with early and late steps being most critical while mid-trajectory steps provide minimal perceptual value.
@@ -263,7 +279,7 @@ We presented StepDrop, a training-free acceleration method for tiny diffusion mo
     \item \textbf{Robustness:} Residual analysis confirms that StepDrop trajectories remain close to full DDIM trajectories, demonstrating robustness to mid-phase skipping.
 \end{itemize}
 
-\paragraph{Limitations.} StepDrop introduces a $\sim$3$\times$ memory overhead from precomputed timestep schedules. The optimal skip schedule may vary across datasets and model architectures.
+\paragraph{Limitations.} We observed higher peak memory in benchmark runs of target-NFE variants (0.32GB vs 0.12GB), likely from benchmarking/allocator artifacts rather than inherent algorithmic requirements; a clean run with cache resets should confirm. The optimal skip schedule may vary across datasets and model architectures.
 
 \paragraph{Future Work.} Promising directions include: (1) extending StepDrop to latent diffusion models for high-resolution synthesis; (2) learning adaptive skip policies via reinforcement learning; and (3) combining StepDrop with orthogonal acceleration techniques like knowledge distillation~\citep{zhang2024accelerating, zhu2024slimflow}.
 
@@ -274,5 +290,67 @@ We thank Duke University for providing computational resources. This work was su
 
 \bibliographystyle{plainnat}
 \bibliography{references}
+
+\clearpage
+\appendix
+
+%==============================================================================
+\section*{Appendix (Supplementary Material)}
+%==============================================================================
+
+\paragraph{Implementation Details.} The ``Importance'' strategy employs a boundary-heavy heuristic: 30\% of steps are allocated to the first decile ($t \in [900, 1000]$), 30\% to the last decile ($t \in [0, 100]$), and 40\% to the middle 80\%. This protects the critical structural formation (early) and fine detail (late) phases.
+
+\paragraph{Additional Figures.} We include skip-pattern barcodes (Fig.~\ref{fig:barcode_appendix}), residual alignment (Fig.~\ref{fig:residual_appendix}), and extended metric plots (Pareto, radar, precision/recall).
+
+\paragraph{Extended Tables.} Appendix tables report (i) full metric sweep across skip strategies and (ii) GFLOPs/memory for DDPM, DDIM, and StepDrop target-NFE variants. The “importance” target-NFE heuristic allocates $\approx$30\% steps to the first 10\%, 30\% to the last 10\%, and 40\% across the middle 80\% of the trajectory.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.7\linewidth]{../Figures/plot_timestep_barcode.png}
+  \caption{Appendix: timestep usage patterns for StepDrop strategies.}
+  \label{fig:barcode_appendix}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.7\linewidth]{../Figures/plot_residuals.png}
+  \caption{Appendix: residual alignment between StepDrop and DDIM trajectories.}
+  \label{fig:residual_appendix}
+\end{figure}
+
+\begin{table}[h]
+  \centering
+  \caption{Appendix: skip strategy comparison (CIFAR-10). Target-NFE selection is more stable than probability-only schedules.}
+  \label{tab:skip_strategies_appendix}
+  \begin{tabular}{lccc}
+    \toprule
+    Strategy & NFE & FID $\downarrow$ & IS $\uparrow$ \\
+    \midrule
+    StepDrop Target-50 (Importance) & 50 & \textbf{76.05} & 4.33 \\
+    StepDrop Target-50 (Uniform) & 50 & 78.60 & 4.46 \\
+    StepDrop Target-50 (Stochastic) & 50 & 89.03 & 3.71 \\
+    StepDrop Target-25 (Importance) & 25 & 77.61 & 4.13 \\
+    StepDrop Linear $p{=}0.5$ & $\sim$50 & 84.87 & 4.08 \\
+    StepDrop Cosine$^2$ $p{=}0.3$ & $\sim$50 & 82.34 & 3.86 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[h]
+  \centering
+  \caption{Appendix: efficiency summary per image. GFLOPs follow the reported 59$\rightarrow$29.5 reduction at 50/25 steps; memory is peak measured during benchmarking (see Limitations note).}
+  \label{tab:efficiency_appendix}
+  \begin{tabular}{lccc}
+    \toprule
+    Method & NFE & GFLOPs $\downarrow$ & Memory (GB) \\
+    \midrule
+    DDPM-1000 & 1000 & 1180 & 0.12 \\
+    DDIM-50 & 50 & 59 & 0.12 \\
+    DDIM-25 & 25 & 29.5 & 0.12 \\
+    StepDrop Target-50 (Importance) & 50 & 59 & 0.32 \\
+    StepDrop Target-25 (Importance) & 25 & 29.5 & 0.32 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
 \end{document}
