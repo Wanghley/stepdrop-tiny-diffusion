@@ -1,0 +1,76 @@
+/*-- scss:defaults --*/
+$font-family-sans-serif: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+$font-family-serif: "Charter", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+$navbar-bg: #ffffff;
+$link-color: #1d4f91;
+
+/*-- scss:rules --*/
+
+// Paper-like reading column: serif body, sans headings.
+main.content {
+  font-family: $font-family-serif;
+  font-size: 1.05rem;
+  line-height: 1.65;
+}
+
+h1, h2, h3, h4,
+.quarto-title h1.title {
+  font-family: $font-family-sans-serif;
+  letter-spacing: -0.01em;
+}
+
+h2 { margin-top: 2.4rem; }
+
+// Title block
+.quarto-title-block .quarto-title-meta-heading {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+// Abstract
+.quarto-title-block .abstract {
+  max-width: 46rem;
+  padding: 0.25rem 0 0.25rem 1.1rem;
+  border-left: 3px solid #1d4f91;
+}
+
+// Booktabs-style tables: heavy top/bottom rule, one light rule under the
+// header, no per-row rules (Bootstrap puts those on the cells, not the rows).
+table.table {
+  border-top: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  font-size: 0.95rem;
+
+  > thead > tr > th { border-bottom: 1px solid currentColor; }
+  > tbody > tr > td { border-bottom-width: 0; }
+  > tbody > tr:hover > td { background: rgba(29, 79, 145, 0.05); }
+}
+
+// "\midrule" after the third body row (used on the main results table).
+table.table.midrule-3 > tbody > tr:nth-child(4) > td {
+  border-top: 1px solid currentColor;
+}
+
+// Algorithm float: ruled box, left-aligned so the indentation reads.
+// (Scoped to <figure>: the same class is also set on its <figcaption>.)
+figure.quarto-float-alg {
+  border-top: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  padding: 0.5rem 0.25rem;
+  margin: 1.5rem 0;
+  text-align: left;
+
+  figcaption {
+    font-family: $font-family-sans-serif;
+    text-align: left;
+    padding-bottom: 0.4rem;
+    margin-bottom: 0.6rem;
+    border-bottom: 1px solid currentColor;
+  }
+  .line-block { text-align: left; margin: 0; font-size: 0.95rem; }
+}
+
+figcaption, .figure-caption, .table-caption, caption {
+  font-size: 0.9rem;
+  color: #555;
+}

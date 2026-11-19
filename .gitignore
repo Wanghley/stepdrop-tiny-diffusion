@@ -47,6 +47,9 @@ LocalUtils/
 *.out
 *.log
 
+# Quarto site output (built in CI by .github/workflows/pages.yml)
+docs/_site/
+
 # MacOS
 .DS_Store
 cifar10_64ch_50ep.pt

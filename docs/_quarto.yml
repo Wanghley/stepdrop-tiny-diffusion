@@ -1,0 +1,58 @@
+project:
+  type: website
+  output-dir: _site
+  render:
+    - index.qmd
+
+website:
+  title: "StepDrop"
+  description: "Accelerating tiny diffusion models with stochastic step skipping."
+  site-url: https://wanghley.github.io/stepdrop-tiny-diffusion
+  open-graph: true
+  twitter-card:
+    image: Figures/plot_nfe_vs_quality.png
+  back-to-top-navigation: true
+  navbar:
+    background: light
+    search: false
+    right:
+      - text: "PDF"
+        href: report/stepdrop.pdf
+      - text: "Poster"
+        href: "stepdrop-tiny-diffusion%20poster.pdf"
+      - text: "Proposal"
+        href: proposal.pdf
+      - icon: github
+        href: https://github.com/wanghley/stepdrop-tiny-diffusion
+        aria-label: GitHub
+  page-footer:
+    left: "StepDrop · Duke University, Department of Electrical and Computer Engineering"
+    right: "Built with [Quarto](https://quarto.org/)"
+
+bibliography: report/references.bib
+csl: apa.csl
+
+crossref:
+  custom:
+    - kind: float
+      reference-prefix: Algorithm
+      key: alg
+      caption-prefix: Algorithm
+
+format:
+  html:
+    theme: [cosmo, custom.scss]
+    toc: true
+    toc-depth: 3
+    toc-title: Contents
+    toc-location: right
+    number-sections: true
+    smooth-scroll: true
+    citations-hover: true
+    footnotes-hover: true
+    crossrefs-hover: true
+    link-external-newwindow: true
+    fig-align: center
+    tbl-cap-location: top
+    alg-cap-location: top
+    html-math-method: mathjax
